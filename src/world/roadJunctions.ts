@@ -1,5 +1,8 @@
 import type { Vec2, Vec3 } from '../core/math'
+import { BLEND, JunctionPlane, MAX_GRADE, MIN_BLEND, type PlaneEnd } from './junctionPlane'
 import { ROAD_WIDTH, type EdgeDef, type NodeDef } from './roadLayout'
+
+export { BLEND, MAX_GRADE, MIN_BLEND }
 
 /**
  * How roads meet at nodes. Every node gets one shared frame — a height plane —
@@ -9,18 +12,10 @@ import { ROAD_WIDTH, type EdgeDef, type NodeDef } from './roadLayout'
 
 /** Two road ends this nearly opposite (turn < 80°) form one continuous road through the node. */
 const THROUGH_COS = Math.cos((100 * Math.PI) / 180)
-/** a junction plane never tilts the through road sideways more than this (rise per metre) */
-const MAX_CROSS = 0.06
-/** nor along itself more than this */
-const MAX_ALONG = 0.12
-/** grade budget the profiles are fitted against (spec: max gradient 14 %) */
-export const MAX_GRADE = 0.14
 /** a shared tangent may not tighten any curve below this (spec: hairpins ≥ 9 m, drivable sideways) */
 export const MIN_CURVE_RADIUS = 9.5
 /** each road keeps the node plane at least this far out from the node */
 const MIN_HOLD = 6
-/** and blends from the plane to its own grade over at most this distance */
-export const BLEND = 40
 
 /** A centreline before heights: horizontal samples (x, y = world z) and their arc length. */
 export interface Centreline {
@@ -39,13 +34,6 @@ const key = (edgeId: string, atStart: boolean) => `${edgeId}:${atStart ? 'start'
 const unit = (x: number, y: number): Vec2 => {
   const l = Math.hypot(x, y) || 1
   return { x: x / l, y: y / l }
-}
-
-/** Unit direction pointing away from the node along a centreline end. */
-export function outward(line: Centreline, atStart: boolean): Vec2 {
-  const f = line.flat
-  const [a, b] = atStart ? [f[0], f[1]] : [f[f.length - 1], f[f.length - 2]]
-  return unit(b.x - a.x, b.y - a.y)
 }
 
 /** The shared height plane at a node, plus how far each road holds it. */
@@ -76,7 +64,8 @@ export class NodeFrame {
 
 /**
  * Plans every node: which road ends continue each other (they then share a
- * tangent, see `phantoms`), the node's height plane and each road's hold distance.
+ * tangent, see `phantoms`), each road's hold distance and the node's height
+ * plane (see JunctionPlane).
  */
 export class JunctionPlanner {
   private readonly nodes: ReadonlyMap<string, NodeDef>
@@ -116,15 +105,15 @@ export class JunctionPlanner {
     return true
   }
 
-  /** Fit each node's plane to the roads meeting there and measure how far each must hold it. */
+  /** Measure how far each road must hold its node's plane, then fit each plane to the roads meeting there. */
   frames(lines: ReadonlyMap<string, Centreline>): Map<string, NodeFrame> {
     const out = new Map<string, NodeFrame>()
     for (const [id, ends] of this.ends) {
       const n = this.nodes.get(id)!
-      const grad = this.fitPlane(n, ends, lines)
       const holds = new Map<string, number>()
       for (const e of ends) holds.set(key(e.edge.id, e.atStart), this.holdOf(e, ends, lines))
-      out.set(id, new NodeFrame(id, { x: n.x, y: n.y, z: n.z }, grad, holds))
+      const plane = new JunctionPlane(ends.map((e) => this.planeEnd(n, e, lines.get(e.edge.id)!, holds.get(key(e.edge.id, e.atStart))!)))
+      out.set(id, new NodeFrame(id, { x: n.x, y: n.y, z: n.z }, plane.solve(), holds))
     }
     return out
   }
@@ -167,61 +156,20 @@ export class JunctionPlanner {
     }
   }
 
-  /**
-   * Plane gradient at a node. A through road fixes the grade along itself (a
-   * weighted mean of its two halves); the other roads tilt it sideways, within
-   * MAX_CROSS. Each road is weighted by how little grade it could give up: a
-   * long, gentle road can absorb a mismatch, a short or steep one cannot.
-   */
-  private fitPlane(n: NodeDef, ends: End[], lines: ReadonlyMap<string, Centreline>): Vec2 {
-    const info = ends.map((e) => {
-      const line = lines.get(e.edge.id)!
-      const far = this.nodes.get(e.atStart ? e.edge.to : e.edge.from)!
-      const grade = (far.y - n.y) / line.length
-      const room = Math.max(0.005, MAX_GRADE - Math.abs(grade)) * line.length
-      return { end: e, out: outward(line, e.atStart), grade, w: 1 / room }
-    })
-    const through = info.find((i) => this.partner.has(key(i.end.edge.id, i.end.atStart)))
-    if (!through) return this.leastSquares(info)
-    const mate = info.find((i) => i.end === this.partner.get(key(through.end.edge.id, through.end.atStart)))!
-    const d = through.out
-    const p = { x: -d.y, y: d.x }
-    // along the through road both halves vote; the partner's outward direction is ≈ −d
-    const mateCos = Math.min(-0.2, mate.out.x * d.x + mate.out.y * d.y)
-    const along = clampAbs((through.w * through.grade + (mate.w * mate.grade) / mateCos) / (through.w + mate.w), MAX_ALONG)
-    let num = 0
-    let den = 1e-4
-    for (const i of info) {
-      if (i === through || i === mate) continue
-      const pd = i.out.x * d.x + i.out.y * d.y
-      const pp = i.out.x * p.x + i.out.y * p.y
-      num += i.w * pp * (i.grade - along * pd)
-      den += i.w * pp * pp
+  /** One end as the plane fit sees it: its natural grade and its tangents over the hold and the blend after it. */
+  private planeEnd(n: NodeDef, e: End, line: Centreline, hold: number): PlaneEnd {
+    const far = this.nodes.get(e.atStart ? e.edge.to : e.edge.from)!
+    const samples: PlaneEnd['samples'] = []
+    const last = line.flat.length - 1
+    for (let k = 0; k < last; k++) {
+      const i = e.atStart ? k : last - k
+      const j = e.atStart ? i + 1 : i - 1
+      const s = e.atStart ? line.dist[i] : line.length - line.dist[i]
+      if (s > hold + BLEND) break
+      const u = Math.min(1, Math.max(0, (s - hold) / BLEND))
+      samples.push({ t: unit(line.flat[j].x - line.flat[i].x, line.flat[j].y - line.flat[i].y), w: s <= hold ? 1 : 1 - u * u * (3 - 2 * u) })
     }
-    const cross = clampAbs(num / den, MAX_CROSS)
-    return { x: d.x * along + p.x * cross, y: d.y * along + p.y * cross }
-  }
-
-  /** Regularised least-squares plane through every end's natural grade (no through road). */
-  private leastSquares(info: { out: Vec2; grade: number; w: number }[]): Vec2 {
-    let a = 1e-3
-    let b = 0
-    let c = 1e-3
-    let rx = 0
-    let ry = 0
-    for (const i of info) {
-      a += i.w * i.out.x * i.out.x
-      b += i.w * i.out.x * i.out.y
-      c += i.w * i.out.y * i.out.y
-      rx += i.w * i.grade * i.out.x
-      ry += i.w * i.grade * i.out.y
-    }
-    const det = a * c - b * b
-    const gx = (c * rx - b * ry) / det
-    const gy = (a * ry - b * rx) / det
-    const l = Math.hypot(gx, gy)
-    const k = l > MAX_ALONG ? MAX_ALONG / l : 1
-    return { x: gx * k, y: gy * k }
+    return { samples, grade: (far.y - n.y) / line.length, length: line.length, hold, town: e.edge.route === 'town' }
   }
 
   /** Distance along an end until its ribbon stops overlapping every other ribbon at the node. */
@@ -249,8 +197,6 @@ export class JunctionPlanner {
     return out
   }
 }
-
-const clampAbs = (v: number, m: number) => Math.max(-m, Math.min(m, v))
 
 function distToPolyline(q: Vec2, poly: Vec2[]): number {
   let best = Infinity

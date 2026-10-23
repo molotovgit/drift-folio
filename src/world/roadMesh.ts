@@ -12,10 +12,12 @@ export { leftOf } from './spline'
 /**
  * Where several roads meet, their ribbons overlap (and the junction apron lies
  * under them). Each road gets a different small lift near each shared node (by
- * its rank among the roads at that node, apron lowest), fading out over
- * JUNCTION_FADE metres, so overlaps never z-fight.
+ * its rank among the roads at that node; the apron lowest, its corner fillets
+ * half a step up). The lift holds over the whole stretch where the road lies on
+ * the node's plane (its hold, where the overlaps are) and fades out over
+ * JUNCTION_FADE metres after it, so overlaps never z-fight.
  */
-const JUNCTION_LIFT = 0.018
+export const JUNCTION_LIFT = 0.018
 const JUNCTION_FADE = 16
 
 /**
@@ -33,9 +35,13 @@ export class RoadMesh {
     const parts: THREE.BufferGeometry[] = []
     for (const edge of roads.edges) {
       const ribbon = RoadSurface.ribbon(edge)
-      parts.push(RoadMesh.geometry({ ...ribbon, positions: RoadMesh.liftNearJunctions(ribbon.positions, edge, rank.get(edge.id)!) }))
+      const hold = { from: roads.junction(edge.from).hold(edge.id, true), to: roads.junction(edge.to).hold(edge.id, false) }
+      parts.push(RoadMesh.geometry({ ...ribbon, positions: RoadMesh.liftNearJunctions(ribbon.positions, edge, rank.get(edge.id)!, hold) }))
     }
-    for (const apron of RoadSurface.aprons(roads)) parts.push(RoadMesh.geometry(apron))
+    const { aprons, fillets } = RoadSurface.junctionPaving(roads)
+    for (const apron of aprons) parts.push(RoadMesh.geometry(apron))
+    // fillets fan from the node over the apron on the same plane: draw them between the apron and the lowest ribbon
+    for (const fillet of fillets) parts.push(RoadMesh.geometry({ ...fillet, positions: RoadMesh.lifted(fillet.positions, JUNCTION_LIFT / 2) }))
     // the colliders keep the true (un-lifted) surface
     this.colliders = RoadSurface.colliders(roads, world)
     // one mesh for every road keeps it to a single draw call
@@ -61,13 +67,20 @@ export class RoadMesh {
   }
 
   /** Copy of ribbon positions with the per-junction lift applied near each end (every rank sits above the apron). */
-  static liftNearJunctions(positions: Float32Array, edge: RoadEdge, rank: { from: number; to: number }): Float32Array {
+  static liftNearJunctions(positions: Float32Array, edge: RoadEdge, rank: { from: number; to: number }, hold: { from: number; to: number }): Float32Array {
     const out = positions.slice()
-    const fade = (d: number) => Math.max(0, 1 - d / JUNCTION_FADE)
+    const fade = (d: number, h: number) => 1 - Math.min(1, Math.max(0, (d - h) / JUNCTION_FADE))
     for (let i = 0; i < edge.points.length; i++) {
-      const lift = JUNCTION_LIFT * ((rank.from + 1) * fade(edge.dist[i]) + (rank.to + 1) * fade(edge.length - edge.dist[i]))
+      const lift = JUNCTION_LIFT * ((rank.from + 1) * fade(edge.dist[i], hold.from) + (rank.to + 1) * fade(edge.length - edge.dist[i], hold.to))
       for (let k = 0; k < RIBBON_ROW; k++) out[(i * RIBBON_ROW + k) * 3 + 1] += lift
     }
+    return out
+  }
+
+  /** Copy of positions raised by `dy`. */
+  private static lifted(positions: Float32Array, dy: number): Float32Array {
+    const out = positions.slice()
+    for (let k = 1; k < out.length; k += 3) out[k] += dy
     return out
   }
 

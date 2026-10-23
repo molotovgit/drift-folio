@@ -7,7 +7,7 @@
  * road trimeshes, guard rails), drives 'systems-a' → 'systems-c' with the
  * scripted RacingLineDriver at the fixed 60 Hz physics step, and writes:
  *   public/ghost/systems.json       encoded GhostRecording, timeline ×1.1
- *   public/ghost/systems.meta.json  handling hash + run stats (CI guard)
+ *   public/ghost/systems.meta.json  handling + road hashes and run stats (CI guards)
  * A run only counts if it finishes cleanly (never off-road > 1 s, no hard rail hit).
  */
 import RAPIER from '@dimforge/rapier3d-compat'
@@ -16,15 +16,17 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { idleControls, type ControlState } from '../src/core/input'
 import { PHYSICS_STEP } from '../src/core/loop'
-import { encodeGhost, GhostRecorder, handlingHash, scaleGhostTime, type GhostRecording } from '../src/game/ghost'
+import { encodeGhost, GhostRecorder, handlingHash, roadHash, scaleGhostTime, type GhostRecording } from '../src/game/ghost'
 import { RacingLineDriver, type RacingLineOptions } from '../src/game/racingLineDriver'
 import { carConfig } from '../src/vehicle/carConfig'
 import { DriftCar, type Telemetry } from '../src/vehicle/driftCar'
 import { surfaceOf } from '../src/vehicle/wheel'
 import { GuardRails } from '../src/world/guardRails'
-import { RoadMesh } from '../src/world/roadMesh'
+import { LotSurface } from '../src/world/lotSurface'
 import { DESCENT_EDGES } from '../src/world/roadLayout'
 import { RoadNetwork } from '../src/world/roadNetwork'
+import { RoadSurface } from '../src/world/roadSurface'
+import { allChannels, PEAK } from '../src/world/shortcutLayout'
 import { TerrainHeights } from '../src/world/terrain'
 import { TerrainCollider } from '../src/world/terrainCollider'
 import { TOWN_LOTS } from '../src/world/townLayout'
@@ -59,14 +61,15 @@ class HeadlessMountain {
 
   constructor() {
     this.world.timestep = PHYSICS_STEP
-    new TerrainCollider(this.world, new TerrainHeights(this.roads, TOWN_LOTS))
+    // same terrain, road, lot and rail colliders (and tags) as MountainWorld / BaseTown build in the game
+    const peakLot = { name: 'peak' as const, ...PEAK }
+    new TerrainCollider(this.world, new TerrainHeights(this.roads, [...TOWN_LOTS, peakLot], allChannels(this.roads)))
+    RoadSurface.colliders(this.roads, this.world)
+    LotSurface.colliders(
+      this.world,
+      TOWN_LOTS.map((l) => LotSurface.of(l, this.roads)),
+    )
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
-    // same geometry and tags as RoadMesh / GuardRails build in the game
-    for (const edge of this.roads.edges) {
-      const { positions, indices } = RoadMesh.ribbon(edge)
-      const c = this.world.createCollider(RAPIER.ColliderDesc.trimesh(positions, indices).setFriction(0.9), body)
-      surfaceOf.set(c.handle, 'road')
-    }
     for (const edge of this.roads.edges.filter((e) => e.route !== 'town')) {
       for (const run of GuardRails.findRuns(edge)) {
         const wall = GuardRails.runGeometry(run, -0.3, 1.1)
@@ -138,7 +141,7 @@ function drive(opts: Partial<RacingLineOptions>): RunResult {
 }
 
 /** Driver variants tried; the fastest clean run becomes the ghost. */
-const VARIANTS: Partial<RacingLineOptions>[] = TRACE ? [{}] : [{}, { maxSpeed: 34 }, { maxSpeed: 42 }, { gripMargin: 0.8 }]
+const VARIANTS: Partial<RacingLineOptions>[] = TRACE ? [{}] : [{}, { maxSpeed: 34 }, { maxSpeed: 42 }, { gripMargin: 0.8 }, { hairpinSpeed: 10 }, { hairpinSpeed: 9 }]
 
 async function main(): Promise<void> {
   await RAPIER.init()
@@ -156,11 +159,13 @@ async function main(): Promise<void> {
     process.exit(1)
   }
   const ghost = scaleGhostTime(best.rec, GHOST_SLOWDOWN)
+  const roads = new RoadNetwork()
   const text = encodeGhost(ghost)
   mkdirSync(dirname(OUT), { recursive: true })
   writeFileSync(OUT, text)
   const meta = {
     handlingHash: handlingHash(carConfig),
+    roadHash: roadHash(DESCENT_EDGES.systems.map((id) => roads.edge(id))),
     scriptedRunS: Number(best.time.toFixed(3)),
     ghostTimeS: Number((best.time * GHOST_SLOWDOWN).toFixed(3)),
     slowdown: GHOST_SLOWDOWN,

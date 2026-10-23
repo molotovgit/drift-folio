@@ -4,7 +4,7 @@ import { RoadProbe, type BumpReport, type ProbePoint } from './support/roadProbe
 
 vi.mock('three/webgpu', () => import('three'))
 const { leftOf } = await import('../../src/world/spline')
-const { RoadSurface } = await import('../../src/world/roadSurface')
+const { FILLET_MAX_GAP, FILLET_REACH, RoadSurface } = await import('../../src/world/roadSurface')
 const { RoadNetwork } = await import('../../src/world/roadNetwork')
 const { TerrainHeights } = await import('../../src/world/terrain')
 const { TerrainCollider } = await import('../../src/world/terrainCollider')
@@ -33,7 +33,7 @@ beforeAll(async () => {
   RoadSurface.colliders(roads, world)
   LotSurface.colliders(
     world,
-    TOWN_LOTS.map((l) => new LotSurface(l, roads)),
+    TOWN_LOTS.map((l) => LotSurface.of(l, roads)),
   )
   PavedPath.collider(world, restStopCut(roads), roads)
   probe = new RoadProbe(world, surfaceOf)
@@ -150,6 +150,50 @@ describe('road joins and bumps on the real mountain', () => {
     }
   })
 
+  it('every inner corner between neighbouring roads is paved out to the fillet reach (beyond the apron)', () => {
+    const bad: string[] = []
+    let sampled = 0
+    for (const n of roads.nodes) {
+      const frame = roads.junction(n.id)
+      const ends = roads.edges
+        .flatMap((e) => [...(e.from === n.id ? [{ e, atStart: true }] : []), ...(e.to === n.id ? [{ e, atStart: false }] : [])])
+        .map((end) => {
+          const p = end.e.points[at(end.e, end.atStart, 4)]
+          return { ...end, angle: Math.atan2(p.z - n.pos.z, p.x - n.pos.x) }
+        })
+        .sort((a, b) => a.angle - b.angle)
+      if (ends.length < 2) continue
+      for (let k = 0; k < ends.length; k++) {
+        const a = ends[k]
+        const b = ends[(k + 1) % ends.length]
+        const gap = (b.angle - a.angle + Math.PI * 2) % (Math.PI * 2)
+        if (gap <= 0 || gap >= FILLET_MAX_GAP) continue
+        const reach = Math.min(FILLET_REACH, frame.hold(a.e.id, a.atStart), frame.hold(b.e.id, b.atStart))
+        // the facing edges of both ribbons s metres out, and the chord between them
+        const facing = (end: typeof a, other: typeof a, s: number) => {
+          const i = at(end.e, end.atStart, s)
+          const p = end.e.points[i]
+          const l = leftOf(end.e.tangent(i).x, end.e.tangent(i).y)
+          const q = other.e.points[at(other.e, other.atStart, s)]
+          const side = (q.x - p.x) * l.x + (q.z - p.z) * l.z > 0 ? 1 : -1
+          return { x: p.x + l.x * side * (end.e.width / 2 - 0.2), y: p.y, z: p.z + l.z * side * (end.e.width / 2 - 0.2) }
+        }
+        for (let s = 4; s <= reach - 2; s += 2) {
+          const pa = facing(a, b, s)
+          const pb = facing(b, a, s)
+          for (let t = 0; t <= 1; t += 0.1) {
+            const x = pa.x + (pb.x - pa.x) * t
+            const z = pa.z + (pb.z - pa.z) * t
+            sampled++
+            if (probe.sample(x, frame.heightAt(x, z), z).tag !== 'road') bad.push(`${n.id} ${a.e.id}/${b.e.id} at ${s} m`)
+          }
+        }
+      }
+    }
+    expect(sampled).toBeGreaterThan(100)
+    expect([...new Set(bad)]).toEqual([])
+  })
+
   it('the terrain stays under the asphalt, and never rises over its edge within a 1 m shoulder', () => {
     const worst = { road: -Infinity, shoulder: -Infinity, roadAt: '', shoulderAt: '' }
     for (const e of roads.edges) {
@@ -175,7 +219,7 @@ describe('road joins and bumps on the real mountain', () => {
     expect(worst.shoulder, worst.shoulderAt).toBeLessThan(0.02)
   })
 
-  it('rolling between a town lot and the street it touches never meets a step', () => {
+  it('rolling between a town lot and the street it touches never meets a step or a kink, nor leaves the paving', () => {
     const bad: string[] = []
     for (const lot of TOWN_LOTS) {
       // (offset by 1.3° so no spoke runs exactly along a mesh edge, where a ray can slip between triangles)
@@ -190,7 +234,7 @@ describe('road joins and bumps on the real mountain', () => {
         while (end < far && !roads.index.nearest(point(end).x, point(end).z, 1)) end += 0.01
         if (end >= far) continue
         const r = RoadProbe.bumps(probe.trace([point(0.5), point(end)]))
-        if (r.step > 0.02) bad.push(`${lot.name} spoke ${a}°: ${fmt(r)}`)
+        if (r.step > 0.02 || r.kink > 0.06 || r.offRoad > 0) bad.push(`${lot.name} spoke ${a}°: ${fmt(r)}`)
       }
     }
     expect(bad).toEqual([])

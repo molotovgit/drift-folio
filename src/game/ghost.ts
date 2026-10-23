@@ -233,3 +233,18 @@ export function hashString(str: string, seed = 0): string {
 
 /** Fingerprint of a handling config (stable JSON → hash). */
 export const handlingHash = (cfg: object): string => hashString(stableStringify(cfg))
+
+/** The parts of a road a ghost lap rides on. */
+interface GhostRoad {
+  id: string
+  points: readonly Vec3[]
+  bank: readonly number[]
+}
+
+/**
+ * Fingerprint of the road surface a ghost was recorded on (centreline to the
+ * centimetre, heights to the millimetre, cross-slope). If the roads move, the
+ * recorded lap floats above or sinks into them and must be re-recorded.
+ */
+export const roadHash = (edges: readonly GhostRoad[]): string =>
+  hashString(edges.map((e) => `${e.id}:${e.points.map((p, i) => `${p.x.toFixed(2)},${p.y.toFixed(3)},${p.z.toFixed(2)},${e.bank[i].toFixed(4)}`).join(';')}`).join('|'))

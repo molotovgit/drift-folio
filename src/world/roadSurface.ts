@@ -15,9 +15,9 @@ const APRON_SEGMENTS = 32
 /** apron u: plain asphalt between the texture's edge lines and centre dash */
 const APRON_U = 0.3
 /** corners between neighbouring roads narrower than this get a fillet (wider ones are outside corners) */
-const FILLET_MAX_GAP = (160 * Math.PI) / 180
+export const FILLET_MAX_GAP = (160 * Math.PI) / 180
 /** a fillet reaches at most this far out along each road */
-const FILLET_REACH = 12
+export const FILLET_REACH = 12
 /**
  * Trimesh flags for road colliders: merge the strip's shared vertices and fix
  * internal edges, so a chassis sliding across the asphalt never catches on a
@@ -101,15 +101,24 @@ export class RoadSurface {
     return { positions, uvs, indices }
   }
 
+  /** Every node's junction paving (aprons and fillets) as one list. */
+  static aprons(roads: RoadNetwork): SurfaceGeometry[] {
+    const { aprons, fillets } = RoadSurface.junctionPaving(roads)
+    return [...aprons, ...fillets]
+  }
+
   /**
    * Every node's junction paving: the apron disc plus a fillet in each corner
-   * between neighbouring roads (sorted by direction around the node).
+   * between neighbouring roads (sorted by direction around the node). Kept
+   * apart because fillets overlap the apron on the same plane (the mesh draws
+   * them a hair higher).
    */
-  static aprons(roads: RoadNetwork): SurfaceGeometry[] {
-    const out: SurfaceGeometry[] = []
+  static junctionPaving(roads: RoadNetwork): { aprons: SurfaceGeometry[]; fillets: SurfaceGeometry[] } {
+    const aprons: SurfaceGeometry[] = []
+    const fillets: SurfaceGeometry[] = []
     for (const n of roads.nodes) {
       const frame = roads.junction(n.id)
-      out.push(RoadSurface.apron(frame, roads.edges[0]?.width ?? 8))
+      aprons.push(RoadSurface.apron(frame, roads.edges[0]?.width ?? 8))
       const ends = roads.edges
         .flatMap((edge) => [...(edge.from === n.id ? [{ edge, atStart: true }] : []), ...(edge.to === n.id ? [{ edge, atStart: false }] : [])])
         .map((end) => ({ ...end, angle: RoadSurface.outwardAngle(end.edge, end.atStart) }))
@@ -119,10 +128,10 @@ export class RoadSurface {
         const a = ends[k]
         const b = ends[(k + 1) % ends.length]
         const gap = (b.angle - a.angle + Math.PI * 2) % (Math.PI * 2)
-        if (gap > 0 && gap < FILLET_MAX_GAP) out.push(RoadSurface.fillet(frame, a, b))
+        if (gap > 0 && gap < FILLET_MAX_GAP) fillets.push(RoadSurface.fillet(frame, a, b))
       }
     }
-    return out
+    return { aprons, fillets }
   }
 
   /**

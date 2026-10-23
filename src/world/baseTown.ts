@@ -16,8 +16,8 @@ import { TownTextures } from './townTextures'
 
 const TYRE_HEIGHT = 0.23
 const MAX_STACK = 8
-/** lots render this far under their collision surface (see buildLots) */
-const LOT_VISUAL_DROP = -0.02
+/** lots draw a little behind coplanar street ribbons in the depth test (see buildLots) */
+const LOT_DEPTH_BIAS = { factor: 2, units: 4 }
 
 /** What happened in town this frame (the game turns these into HUD hints and actions). */
 export interface TownEvents {
@@ -39,6 +39,8 @@ export class BaseTown {
   private readonly coneIdx: number[] = []
   private readonly coneHit = new Set<number>()
   private readonly lanternMats: THREE.MeshToonNodeMaterial[] = []
+  /** the plaza's paved surface (lanterns stand on its ramps to the street) */
+  private readonly plaza: LotSurface
   private readonly pads = BaseTown.safeLinks().map((l, i) => ({ ...l, x: LINK_PADS.x, z: LINK_PADS.z0 + i * LINK_PADS.spacing }))
 
   constructor(
@@ -57,6 +59,7 @@ export class BaseTown {
       { name: 'gym-start', circle: { center: { x: GYMKHANA.start.x, y: g.y, z: GYMKHANA.start.z }, radius: GYMKHANA.gateRadius } },
       { name: 'gym-finish', circle: { center: { x: GYMKHANA.finish.x, y: g.y, z: GYMKHANA.finish.z }, radius: GYMKHANA.gateRadius } },
     ])
+    this.plaza = LotSurface.of(lot('plaza'), roads)
     this.buildLots(roads)
     this.buildPads()
   }
@@ -114,7 +117,7 @@ export class BaseTown {
    * off-road. Each meets the street it touches without a step (LotSurface).
    */
   private buildLots(roads: RoadNetwork): void {
-    const lots = TOWN_LOTS.map((l) => new LotSurface(l, roads))
+    const lots = TOWN_LOTS.map((l) => LotSurface.of(l, roads))
     for (const surface of lots) {
       const l = surface.lot
       const map = l.name === 'skidpad' ? TownTextures.skidpad() : TownTextures.concrete()
@@ -125,9 +128,12 @@ export class BaseTown {
       geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
       geo.setIndex(new THREE.BufferAttribute(indices, 1))
       geo.computeVertexNormals()
-      const mesh = new THREE.Mesh(geo, ToonMaterials.create({ color: '#ffffff', map, flatShading: false }))
-      // drawn a touch under the true surface so street ribbons crossing a lot never z-fight with it
-      mesh.position.y = LOT_VISUAL_DROP
+      const material = ToonMaterials.create({ color: '#ffffff', map, flatShading: false })
+      // where a lot takes a street's surface the two coincide: push the lot back in depth so the street (and its markings) wins
+      material.polygonOffset = true
+      material.polygonOffsetFactor = LOT_DEPTH_BIAS.factor
+      material.polygonOffsetUnits = LOT_DEPTH_BIAS.units
+      const mesh = new THREE.Mesh(geo, material)
       mesh.receiveShadow = true
       this.scene.add(mesh)
     }
@@ -222,10 +228,11 @@ export class BaseTown {
 
   /** Six unlit lanterns on posts around the plaza; each lights when its shortcut is found. */
   private placeLanterns(lantern: THREE.Group): void {
-    const y0 = lot('plaza').y
     const postGeo = new THREE.CylinderGeometry(0.07, 0.09, 3.2, 8).translate(0, 1.6, 0)
     const postMat = ToonMaterials.create({ color: '#4a2c2a' })
     for (const p of LANTERNS) {
+      // the arc runs over the plaza's ramp to the street, so each post stands on the paving under it
+      const y0 = this.plaza.heightAt(p.x, p.z)
       const post = new THREE.Mesh(postGeo, postMat)
       post.position.set(p.x, y0, p.z)
       const l = lantern.clone(true)

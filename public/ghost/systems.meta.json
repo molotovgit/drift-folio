@@ -1,11 +1,12 @@
 {
   "handlingHash": "0bc8afadc31079",
-  "scriptedRunS": 51.817,
-  "ghostTimeS": 56.998,
+  "roadHash": "0c1c96a756893d",
+  "scriptedRunS": 52.3,
+  "ghostTimeS": 57.53,
   "slowdown": 1.1,
-  "samples": 1037,
+  "samples": 1047,
   "stayedOnRoad": true,
-  "maxOffRoadS": 0,
+  "maxOffRoadS": 0.233,
   "edges": [
     "systems-a",
     "systems-b",

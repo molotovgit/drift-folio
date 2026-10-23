@@ -1,8 +1,8 @@
 import type { Vec2 } from '../core/math'
-import { BLEND, MAX_GRADE, type Centreline, type NodeFrame } from './roadJunctions'
+import { BLEND, MAX_GRADE, MIN_BLEND, type Centreline, type NodeFrame } from './roadJunctions'
 
-/** Shortest plane-to-grade blend a road may fall back to when its grade budget is tight. */
-const MIN_BLEND = 12
+/** the two holds together never take more than this share of a road, leaving room to blend between them */
+const MAX_HOLD_SHARE = 0.6
 
 const smoothstep = (e0: number, e1: number, x: number) => {
   if (e1 <= e0) return x < e0 ? 0 : 1
@@ -23,7 +23,8 @@ export interface ProfileEnd {
  * cross-slope), so every road at a junction shares one surface. It then blends
  * smoothly (smoothstep weights, so the grade is continuous) into a constant
  * middle grade chosen so the road lands exactly on the far node. Blends shorten
- * if the middle grade would exceed MAX_GRADE.
+ * if the middle grade would exceed MAX_GRADE; on a road too short for both
+ * holds, the holds shrink (MAX_HOLD_SHARE).
  */
 export class RoadProfile {
   /** centreline height per sample */
@@ -32,6 +33,9 @@ export class RoadProfile {
   readonly bank: number[]
 
   constructor(line: Centreline, tangents: readonly Vec2[], start: ProfileEnd, end: ProfileEnd) {
+    const k = Math.min(1, (MAX_HOLD_SHARE * line.length) / (start.hold + end.hold))
+    start = { ...start, hold: start.hold * k }
+    end = { ...end, hold: end.hold * k }
     let blend = BLEND
     let fit = RoadProfile.solve(line, tangents, start, end, blend)
     while (fit.maxGrade > MAX_GRADE && blend > MIN_BLEND) {

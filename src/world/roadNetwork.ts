@@ -287,17 +287,32 @@ export class RoadNetwork {
    * smoothly to `ownY` over `ramp` metres starting just beyond the road edge.
    */
   meet(x: number, z: number, ownY: number, ramp = MEET_RAMP): number {
+    const m = this.meeting(x, z, ramp)
+    return m ? RoadNetwork.blendMeet(m.roadY, ownY, m.past / ramp) : ownY
+  }
+
+  /**
+   * The road a paved surface at (x, z) has to meet, if one is within `ramp`:
+   * its surface height there and how far (x, z) lies past the strip beside the
+   * asphalt that stays level with it (0 on or next to the road).
+   */
+  meeting(x: number, z: number, ramp = MEET_RAMP): { roadY: number; past: number } | null {
     const half = ROAD_WIDTH / 2
     const hit = this.index.nearest(x, z, half + MEET_FLAT + ramp + 2)
-    if (!hit) return ownY
+    if (!hit) return null
     const { edge, index } = hit
     // across the road the lateral offset is the true distance; past an edge's end only the sample distance is
     const inside = index > 0 && index < edge.points.length - 1
     const d = inside ? Math.abs(edge.offsetOf(index, x, z)) : hit.dist
     // level with the road for MEET_FLAT past its edge, so a coarse mesh straddling the edge never pokes above the asphalt
-    const t = Math.min(1, Math.max(0, (d - half - MEET_FLAT) / ramp))
-    const w = t * t * (3 - 2 * t)
-    return edge.surfaceNear(index, x, z, half) * (1 - w) + ownY * w
+    return { roadY: edge.surfaceNear(index, x, z, half), past: Math.max(0, d - half - MEET_FLAT) }
+  }
+
+  /** Smoothstep from the road's height (t = 0) to a surface's own height (t ≥ 1). */
+  static blendMeet(roadY: number, ownY: number, t: number): number {
+    const k = Math.min(1, Math.max(0, t))
+    const w = k * k * (3 - 2 * k)
+    return roadY * (1 - w) + ownY * w
   }
 
   /** Length of a themed descent, Fork 1 → town. */

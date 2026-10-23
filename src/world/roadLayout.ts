@@ -31,8 +31,8 @@ const E = (id: string, from: string, to: string, route: RoadRoute, ctrl: [number
 export const NODE_DEFS: readonly NodeDef[] = [
   N('summit', 0, 0, -30),
   N('fork1', 0, -5, 110),
-  N('fork2', 0, -32, 300),
-  N('join2', 0, -62, 520),
+  N('fork2', 0, -30, 300),
+  N('join2', 0, -64, 520),
   N('sysBranchOut', -100, -58, 345),
   N('sysBranchIn', -112, -76, 470),
   N('townA', 140, -116, 820),

@@ -93,7 +93,7 @@ export class TerrainHeights {
     /** dirt shortcuts and the railway bed, carved to their height profile */
     channels: readonly Channel[] = [],
   ) {
-    this.lots = lots.map((l) => new LotSurface(l, roads))
+    this.lots = lots.map((l) => LotSurface.of(l, roads))
     this.channels = channels.map((c) => ({ c, box: ChannelBox.of(c) }))
     const n = this.cells + 1
     this.heights = new Float32Array(n * n)

@@ -11,16 +11,38 @@ export interface FlatLot {
   r: number
   /** paved surface height */
   y: number
+  /** the part that must stay dead flat (what is driven or stands on it); ramps to the streets stay outside it */
+  usable?: Capsule
 }
+
+/** Points within `r` of the segment a–b (a disc when a = b). */
+export interface Capsule {
+  a: { x: number; z: number }
+  b: { x: number; z: number }
+  r: number
+}
+
+/** Horizontal distance from (x, z) to a capsule (0 inside). */
+export function capsuleDistance(c: Capsule, x: number, z: number): number {
+  const dx = c.b.x - c.a.x
+  const dz = c.b.z - c.a.z
+  const t = Math.max(0, Math.min(1, ((x - c.a.x) * dx + (z - c.a.z) * dz) / (dx * dx + dz * dz || 1)))
+  return Math.max(0, Math.hypot(c.a.x + dx * t - x, c.a.z + dz * t - z) - c.r)
+}
+
+const disc = (x: number, z: number, r: number): Capsule => ({ a: { x, z }, b: { x, z }, r })
 
 // heights sit level with the street each lot meets, so the ramps where they join stay small (LotSurface)
 export const TOWN_LOTS: readonly FlatLot[] = [
   // main plaza in front of the pit garage, touching the town street at z ≈ 840
-  { name: 'plaza', x: 0, z: 884, r: 44, y: -117.2 },
+  // usable: the garage, tyre rack, link pads and bowling pins
+  { name: 'plaza', x: 0, z: 884, r: 44, y: -117.1, usable: disc(0, 884, 32) },
   // skidpad lot with the donut ring, west of the plaza
-  { name: 'skidpad', x: -96, z: 870, r: 31, y: -117.45 },
+  // usable: the painted ring (r ≈ 18 m) plus room to drift around it
+  { name: 'skidpad', x: -96, z: 870, r: 31, y: -116.4, usable: disc(-96, 870, 24) },
   // gymkhana lot by the west street
-  { name: 'gymkhana', x: 176, z: 884, r: 32, y: -117.75 },
+  // usable: the cone course between its gates (see GYMKHANA)
+  { name: 'gymkhana', x: 176, z: 884, r: 32, y: -117.45, usable: { a: { x: 150, z: 884 }, b: { x: 202, z: 884 }, r: 6 } },
 ]
 
 export const lot = (name: FlatLot['name']): FlatLot => TOWN_LOTS.find((l) => l.name === name)!
