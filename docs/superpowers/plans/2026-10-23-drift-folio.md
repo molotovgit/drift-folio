@@ -28,7 +28,7 @@ The spec spans eleven subsystems. Splitting it into eleven separate plans would 
 - Audio and any third-party asset: CC0 or self-made only; record source in `ASSETS.md`.
 - Budgets: initial payload ≤ 15 MB; first interactive frame ≤ 8 s at 20 Mbps; 60 fps on a 2020 mid laptop; 30 fps on a 2022 mid phone.
 - Drift threshold |β| ≥ 12° and speed ≥ 8 m/s. Score per frame `|β|° × speed × dt × multiplier`. Multiplier +1 per drift started within 1.5 s of the last, cap ×5. Bank after 2.0 s without drift. Off-road for > 1.0 s (except S2) or rail impact above threshold = crash.
-- Summit 0 m, town −120 m, each descent 600–900 m.
+- Summit 0 m, town −120 m, each descent 600–1000 m (was 900; raised in M3, see spec §6).
 - Files under 500 lines (project CLAUDE.md).
 - Physics step fixed at 1/60 s; frame dt clamped to ≤ 1/30 s before accumulation.
 
@@ -245,7 +245,7 @@ Three fixed shots (summit start, hairpin under a lamp, mid-drift chase) side by 
 ### Task 3.1: Road network data
 **Files:** `src/world/roadNetwork.ts`. Test `tests/unit/roadNetwork.test.ts`.
 **Interfaces:** `RouteId` (from M0) plus `'summit' | 'town' | 'return'`; `roadNetwork: { nodes: Node[]; edges: Edge[] }`, `Edge { id; from; to; route: RouteId; points: Vec3[]; width: number }`; `routeLength(route): number`; `pathFromSummitToTown(route): Edge[]`; `nearestOnRoad(p: Vec3): { edgeId; t; dist }`.
-**Tests:** summit node at y = 0, town node at y = −120 ± 1; each of the three descents 600–900 m; every edge reachable from the summit and every edge reaches the town; the return road connects town to summit; Fork 2 splits and rejoins on the platform route; max gradient ≤ 14%.
+**Tests:** summit node at y = 0, town node at y = −120 ± 1; each of the three descents 600–1000 m; every edge reachable from the summit and every edge reaches the town; the return road connects town to summit; Fork 2 splits and rejoins on the platform route; max gradient ≤ 14%.
 
 ### Task 3.2: Terrain
 **Files:** `src/world/terrain.ts`.
