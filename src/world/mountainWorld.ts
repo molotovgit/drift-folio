@@ -1,11 +1,15 @@
 import type RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
 import { ModelLibrary } from '../render/loadModel'
+import type { QualityTier } from '../render/post'
 import { Checkpoints, type Checkpoint } from './checkpoints'
 import { PropPlacer } from './dressing'
+import { GroundPaint } from './groundPaint'
 import { GuardRails } from './guardRails'
-import { InstancedProps, placeMatrix } from './instancedProps'
-import { lampSpots, landmarks, treeKeepOut, treeSpots } from './mountainLayout'
+import { CullScheduler, InstancedProps, placeMatrix } from './instancedProps'
+import { lampSpots, landmarks, treeKeepOut, treeSpots, type TreeSpot } from './mountainLayout'
+import { Roadside } from './roadside'
+import { RoadsideLayout } from './roadsideLayout'
 import { RoadMesh } from './roadMesh'
 import { RoadNetwork } from './roadNetwork'
 import { Signposts } from './signposts'
@@ -31,8 +35,17 @@ export class MountainWorld {
   /** route signs at the two forks */
   readonly signposts: Signposts
   private lampAnchors: THREE.Vector3[] = []
-  /** culled instanced props (forest, lamps), re-culled every frame from the camera */
+  /** culled instanced props (forest, lamps, roadside plants), re-culled every frame from the camera */
   private readonly instanced: InstancedProps[] = []
+  /** staggers those re-culls over frames */
+  private readonly culler = new CullScheduler()
+  /** the forest plus the roadside tree clusters (placed before the terrain is painted: canopy shade) */
+  private readonly trees: TreeSpot[]
+  /** grass, flowers, shrubs, rocks, bamboo and jizo along the roads */
+  private readonly roadside: RoadsideLayout
+  /** the built roadside sets (after `dress`) and the tier they are thinned for */
+  private roadsideSets: Roadside | null = null
+  private tier: QualityTier = 'high'
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -41,7 +54,14 @@ export class MountainWorld {
     const peakLot = { name: 'peak' as const, x: PEAK.x, z: PEAK.z, r: PEAK.r, y: PEAK.y }
     this.terrain = new TerrainHeights(this.roads, [...TOWN_LOTS, peakLot], allChannels(this.roads))
     this.terrainCollider = new TerrainCollider(world, this.terrain)
-    scene.add(new TerrainMesh(this.terrain).mesh)
+    const forestKeepOut = treeKeepOut(this.roads)
+    this.roadside = new RoadsideLayout(this.roads, this.terrain, forestKeepOut)
+    this.trees = [...treeSpots(this.roads, this.terrain, forestKeepOut), ...this.roadside.trees]
+    const canopies = [
+      ...this.trees.map((t) => ({ x: t.x, z: t.z, r: 5 * t.scale })),
+      ...this.roadside.items.filter((i) => i.kind === 'bamboo').map((i) => ({ x: i.x, z: i.z, r: 3 * i.scale })),
+    ]
+    scene.add(new TerrainMesh(this.terrain, new GroundPaint(this.roads, canopies)).mesh)
     scene.add(new RoadMesh(this.roads, world).group)
     this.signposts = new Signposts(this.roads)
     // S3: a deliberate break in the rail at the top of the broken-rail chute
@@ -54,9 +74,18 @@ export class MountainWorld {
     this.checkpoints = new Checkpoints(this.roads, (x, z) => this.heightAt(x, z), this.start)
   }
 
-  /** Per-frame: re-cull instanced props against the camera. */
+  /** Per-frame: re-cull instanced props against the camera (a few sets per frame). */
   update(camera: THREE.Camera): void {
-    for (const p of this.instanced) p.update(camera)
+    this.culler.update(this.instanced, camera)
+  }
+
+  /**
+   * Thin the roadside plants for a quality tier. Safe before `dress` (applied
+   * when the plants are built) and at runtime when the perf governor drops a tier.
+   */
+  setTier(tier: QualityTier): void {
+    this.tier = tier
+    this.roadsideSets?.setTier(tier)
   }
 
   /** Instances drawn this frame across all culled props (for tests/budgets). */
@@ -73,18 +102,19 @@ export class MountainWorld {
     return this.lampAnchors
   }
 
-  /** Load and place lamps, the forest and landmarks. */
-  async dress(): Promise<void> {
+  /** Load and place lamps, the forest, the roadside plants (thinned for `tier`) and landmarks. */
+  async dress(tier: QualityTier = this.tier): Promise<void> {
+    this.tier = tier
     // lamps stand on the ground beside the road (the terrain starts sloping away there)
     const lamps = lampSpots(this.roads).map((l) => ({ ...l, pos: { ...l.pos, y: Math.min(l.pos.y, this.heightAt(l.pos.x, l.pos.z)) } }))
-    const trees = treeSpots(this.roads, this.terrain, treeKeepOut(this.roads))
     const byModel = new Map<string, THREE.Matrix4[]>()
-    for (const t of trees) {
+    for (const t of this.trees) {
       let list = byModel.get(t.model)
       if (!list) byModel.set(t.model, (list = []))
       list.push(placeMatrix(t.x, t.y, t.z, t.yaw, t.scale))
     }
-    const [lampProps, ...forest] = await Promise.all([
+    const [roadside, lampProps, ...forest] = await Promise.all([
+      Roadside.build(this.roadside, tier),
       InstancedProps.create('lamp', lamps.map((l) => placeMatrix(l.pos.x, l.pos.y, l.pos.z, l.yaw))),
       ...[...byModel].map(([model, transforms]) => InstancedProps.create(model, transforms)),
       PropPlacer.place(this.scene, landmarks(this.roads, this.terrain)),
@@ -97,6 +127,13 @@ export class MountainWorld {
       this.scene.add(p.group)
       this.instanced.push(p)
     }
+    for (const p of roadside.sets) {
+      this.scene.add(p.group)
+      this.instanced.push(p)
+    }
+    // the governor may have dropped the tier while the models loaded
+    this.roadsideSets = roadside
+    roadside.setTier(this.tier)
     this.lampAnchors = await this.bulbPositions(lamps)
   }
 
