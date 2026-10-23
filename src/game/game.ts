@@ -186,7 +186,11 @@ export class Game {
     this.features?.tick(h)
     this.world.step(this.events)
     this.events.drainContactForceEvents((e) => {
-      if (!CRASH_SURFACES.has(surfaceOf.get(e.collider1()) ?? '') && !CRASH_SURFACES.has(surfaceOf.get(e.collider2()) ?? '')) return
+      const s1 = surfaceOf.get(e.collider1()) ?? ''
+      const s2 = surfaceOf.get(e.collider2()) ?? ''
+      if (!CRASH_SURFACES.has(s1) && !CRASH_SURFACES.has(s2)) return
+      // guard rails glance the car back on course (arcade graze) rather than stopping it
+      if (s1 === 'rail' || s2 === 'rail') this.car.grazeWall(e.maxForceDirection())
       if (!this.crashed) {
         this.crashCount++
         this.audio.event({ type: 'crash', value: 0 })
@@ -236,7 +240,9 @@ export class Game {
   private readControls(dt: number, paused: boolean): void {
     const c = this.input.read(dt)
     // driving inputs are ignored while the overlay is open
-    this.controls = paused ? { ...c, throttle: 0, brake: 0, steer: 0, handbrake: false } : c
+    this.controls = paused ? { ...c, throttle: 0, brake: 0, steer: 0, drift: 0, handbrake: false } : c
+    // gamepad Start/Options: the skip overlay doubles as the pause screen
+    if (c.pause) skipOverlay.toggleByUser()
     if (c.camera) this.camera.toggleMode()
     if (c.mute) this.hud.hint(this.audio.toggleMute() ? 'Sound off (M)' : 'Sound on (M)')
     if (c.reset) this.resetCar()

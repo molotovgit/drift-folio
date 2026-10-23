@@ -60,6 +60,29 @@ describe('keyboard input', () => {
     expect(input.read(0.016).throttle).toBe(0)
   })
 
+  it('J / L drive the drift axis (left negative), ramping in like an analog stick', () => {
+    const { input, key } = setup()
+    key('keydown', 'KeyL')
+    const first = input.read(0.06).drift
+    expect(first).toBeGreaterThan(0.2)
+    expect(first).toBeLessThan(0.5)
+    expect(input.read(0.2).drift).toBe(1)
+    key('keyup', 'KeyL')
+    key('keydown', 'KeyJ')
+    expect(input.read(0.5).drift).toBe(-1)
+    key('keyup', 'KeyJ')
+    expect(input.read(0.2).drift).toBe(0)
+  })
+
+  it('drift and steer are independent axes', () => {
+    const { input, key } = setup()
+    key('keydown', 'KeyL')
+    key('keydown', 'KeyA')
+    const s = input.read(0.5)
+    expect(s.drift).toBe(1)
+    expect(s.steer).toBe(-1)
+  })
+
   it('merges an analog touch source', () => {
     const { input } = setup()
     input.addSource({ read: () => ({ steer: 0.7, throttle: 1 }) })
