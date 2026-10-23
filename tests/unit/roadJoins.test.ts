@@ -9,6 +9,7 @@ const { RoadNetwork } = await import('../../src/world/roadNetwork')
 const { TerrainHeights } = await import('../../src/world/terrain')
 const { TerrainCollider } = await import('../../src/world/terrainCollider')
 const { TOWN_LOTS } = await import('../../src/world/townLayout')
+const { DESCENT_EDGES } = await import('../../src/world/roadLayout')
 const { allChannels, restStopCut } = await import('../../src/world/shortcutLayout')
 const { PavedPath } = await import('../../src/world/pavedPath')
 const { LotSurface } = await import('../../src/world/lotSurface')
@@ -77,7 +78,6 @@ const at = (e: RoadEdge, atStart: boolean, s: number) => {
 function junctionRuns(reach = 26, turnIn = 10): { name: string; centre: ProbePoint[] }[] {
   const out: { name: string; centre: ProbePoint[] }[] = []
   for (const n of roads.nodes) {
-    const frame = roads.junction(n.id)
     const ends = roads.edges.flatMap((e) => [...(e.from === n.id ? [{ e, atStart: true }] : []), ...(e.to === n.id ? [{ e, atStart: false }] : [])])
     for (const a of ends) {
       for (const b of ends) {
@@ -88,21 +88,27 @@ function junctionRuns(reach = 26, turnIn = 10): { name: string; centre: ProbePoi
         const ub = { x: pb.x - n.pos.x, z: pb.z - n.pos.z }
         const cos = (ua.x * ub.x + ua.z * ub.z) / Math.hypot(ua.x, ua.z) / Math.hypot(ub.x, ub.z)
         if (cos > Math.cos((80 * Math.PI) / 180)) continue // sharper than a 100° turn
-        const turn: ProbePoint[] = []
-        for (let k = 1; k < 40; k++) {
-          const t = k / 40
-          const x = (1 - t) ** 2 * pa.x + 2 * (1 - t) * t * n.pos.x + t * t * pb.x
-          const z = (1 - t) ** 2 * pa.z + 2 * (1 - t) * t * n.pos.z + t * t * pb.z
-          turn.push({ x, y: frame.heightAt(x, z), z })
-        }
-        out.push({
-          name: `${n.id}: ${a.e.id} -> ${b.e.id}`,
-          centre: [...edgeCentre(a.e, at(a.e, a.atStart, reach), at(a.e, a.atStart, turnIn)), ...turn, ...edgeCentre(b.e, at(b.e, b.atStart, turnIn), at(b.e, b.atStart, reach))],
-        })
+        out.push({ name: `${n.id}: ${a.e.id} -> ${b.e.id}`, centre: throughNode(n.id, a, b, reach, turnIn) })
       }
     }
   }
   return out
+}
+
+/** Approach a node on road end `a` from `reach` metres out, a smooth quadratic turn from `turnIn` metres, leave on end `b`. */
+function throughNode(node: string, a: { e: RoadEdge; atStart: boolean }, b: { e: RoadEdge; atStart: boolean }, reach: number, turnIn = 10): ProbePoint[] {
+  const n = roads.node(node).pos
+  const frame = roads.junction(node)
+  const pa = a.e.points[at(a.e, a.atStart, turnIn)]
+  const pb = b.e.points[at(b.e, b.atStart, turnIn)]
+  const turn: ProbePoint[] = []
+  for (let k = 1; k < 40; k++) {
+    const t = k / 40
+    const x = (1 - t) ** 2 * pa.x + 2 * (1 - t) * t * n.x + t * t * pb.x
+    const z = (1 - t) ** 2 * pa.z + 2 * (1 - t) * t * n.z + t * t * pb.z
+    turn.push({ x, y: frame.heightAt(x, z), z })
+  }
+  return [...edgeCentre(a.e, at(a.e, a.atStart, reach), at(a.e, a.atStart, turnIn)), ...turn, ...edgeCentre(b.e, at(b.e, b.atStart, turnIn), at(b.e, b.atStart, reach))]
 }
 
 /** Worst report over several wheel lines. */
@@ -133,6 +139,21 @@ describe('road joins and bumps on the real mountain', () => {
       const centre = edgeCentre(e, 0, e.points.length - 1)
       const r = worst(OFFSETS.map((off) => RoadProbe.bumps(probe.trace(offsetPath(centre, off)))))
       if (r.step > 0.02 || r.kink > 0.06 || r.offRoad > 0) bad.push(`${e.id}: ${fmt(r)} @ ${(r.at * 0.25).toFixed(0)} m`)
+    }
+    expect(bad).toEqual([])
+  })
+
+  it('every themed descent across each of its joins (e.g. systems-b -> systems-c), all five wheel lines edge to edge: no step, kink or gap', () => {
+    const bad: string[] = []
+    for (const [route, ids] of Object.entries(DESCENT_EDGES)) {
+      for (let k = 0; k + 1 < ids.length; k++) {
+        const a = roads.edge(ids[k])
+        const b = roads.edge(ids[k + 1])
+        // 60 m either side of the join node, rounding it like a car does (platform-w -> platform-down turns 92°)
+        const centre = throughNode(a.to, { e: a, atStart: false }, { e: b, atStart: true }, 60)
+        const r = worst(OFFSETS.map((off) => RoadProbe.bumps(probe.trace(offsetPath(centre, off)))))
+        if (r.step > 0.02 || r.kink > 0.06 || r.offRoad > 0) bad.push(`${route} ${a.id} -> ${b.id}: ${fmt(r)}`)
+      }
     }
     expect(bad).toEqual([])
   })
