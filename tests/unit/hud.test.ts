@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createHud, HUD_TIMING, type Hud } from '../../src/ui/hud'
+import { Hud, HUD_TIMING } from '../../src/ui/hud'
 
 const S = (running: number, multiplier = 1, banked = 0, drifting = false) => ({ running, multiplier, banked, drifting })
 
@@ -13,7 +13,7 @@ describe('hud', () => {
     vi.useFakeTimers()
     document.body.innerHTML = '<div id="hud" aria-live="polite"></div>'
     root = document.getElementById('hud')!
-    hud = createHud(root)
+    hud = new Hud(root)
   })
   afterEach(() => {
     hud.dispose()

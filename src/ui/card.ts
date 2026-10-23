@@ -1,13 +1,6 @@
 import { projects, routeNames, type CardId, type ProjectCard } from '../content/projects'
 import '../styles/card.css'
 
-export interface CardPanel {
-  show(id: CardId): void
-  hide(): void
-  readonly openId: CardId | null
-  dispose(): void
-}
-
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)
   e.className = cls
@@ -15,116 +8,127 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   return e
 }
 
+/** Focused element that handles Enter itself (so the panel must not). */
 function isControl(e: Element | null): boolean {
   if (!e) return false
   return e.matches('a[href], button, input, select, textarea, [contenteditable=""], [contenteditable="true"]')
 }
 
-const byId =new Map<CardId, ProjectCard>(projects.map((p) => [p.id, p]))
+const BY_ID = new Map<CardId, ProjectCard>(projects.map((p) => [p.id, p]))
 
 /**
  * In-game project card that slides in when a corner opens. Non-modal: it never
  * takes focus, so driving keeps working. While open, Escape closes it and
  * Enter opens the GitHub link of a public project in a new tab.
  */
-export function createCardPanel(root: HTMLElement): CardPanel {
-  const panel = el('aside', 'cardp')
-  panel.id = 'card-panel'
-  panel.setAttribute('role', 'dialog')
-  panel.setAttribute('aria-modal', 'false')
-  panel.setAttribute('aria-labelledby', 'card-panel-title')
-  panel.hidden = true
+export class CardPanel {
+  private readonly panel: HTMLElement
+  private readonly route: HTMLElement
+  private readonly tag: HTMLElement
+  private readonly title: HTMLElement
+  private readonly blurb: HTMLElement
+  private readonly chips: HTMLUListElement
+  private readonly link: HTMLAnchorElement
+  private readonly keyHint: HTMLElement
 
-  const card = el('article', 'card cardp__card')
-  const top = el('div', 'card__top')
-  const route = el('span', 'card__route')
-  const tag = el('span', 'card__tag')
-  top.append(route, tag)
-  const title = el('h2', 'card__title')
-  title.id = 'card-panel-title'
-  const blurb = el('p', 'card__blurb')
-  const chips = el('ul', 'card__stack')
-  const actions = el('div', 'cardp__actions')
-  const link = el('a', 'card__go', 'View on GitHub')
-  link.target = '_blank'
-  link.rel = 'noopener'
-  const keyHint = el('span', 'cardp__keys')
-  const close = el('button', 'cardp__close')
-  close.type = 'button'
-  close.setAttribute('aria-label', 'Close project card')
-  close.textContent = '×'
-  actions.append(link, keyHint)
-  card.append(close, top, title, blurb, chips, actions)
-  panel.append(card)
-  root.append(panel)
+  private current: CardId | null = null
+  private url: string | null = null
+  // bound once so add/removeEventListener match
+  private readonly onKey = (e: KeyboardEvent) => this.handleKey(e)
 
-  let openId: CardId | null = null
-  let url: string | null = null
+  constructor(root: HTMLElement) {
+    this.panel = el('aside', 'cardp')
+    this.panel.id = 'card-panel'
+    this.panel.setAttribute('role', 'dialog')
+    this.panel.setAttribute('aria-modal', 'false')
+    this.panel.setAttribute('aria-labelledby', 'card-panel-title')
+    this.panel.hidden = true
 
-  function returnFocusToGame() {
-    // A mouse click on the close button or link focuses it; hand focus back to driving.
-    if (panel.contains(document.activeElement)) {
-      const scene = document.getElementById('scene')
-      if (scene) scene.focus({ preventScroll: true })
-      else (document.activeElement as HTMLElement | null)?.blur()
-    }
+    const card = el('article', 'card cardp__card')
+    const top = el('div', 'card__top')
+    this.route = el('span', 'card__route')
+    this.tag = el('span', 'card__tag')
+    top.append(this.route, this.tag)
+    this.title = el('h2', 'card__title')
+    this.title.id = 'card-panel-title'
+    this.blurb = el('p', 'card__blurb')
+    this.chips = el('ul', 'card__stack')
+    const actions = el('div', 'cardp__actions')
+    this.link = el('a', 'card__go', 'View on GitHub')
+    this.link.target = '_blank'
+    this.link.rel = 'noopener'
+    this.keyHint = el('span', 'cardp__keys')
+    const close = el('button', 'cardp__close', '×')
+    close.type = 'button'
+    close.setAttribute('aria-label', 'Close project card')
+    actions.append(this.link, this.keyHint)
+    card.append(close, top, this.title, this.blurb, this.chips, actions)
+    this.panel.append(card)
+    root.append(this.panel)
+
+    close.addEventListener('click', () => this.hide())
+    this.link.addEventListener('click', () => queueMicrotask(() => this.returnFocusToGame()))
   }
 
-  function onKey(e: KeyboardEvent) {
-    if (openId === null) return
+  /** Card currently shown, or null. */
+  get openId(): CardId | null {
+    return this.current
+  }
+
+  /** Fill the panel with project `id` and show it (replaces any open card). */
+  show(id: CardId): void {
+    const p = BY_ID.get(id)
+    if (!p) return
+    this.route.textContent = routeNames[p.route]
+    this.tag.textContent = p.public ? 'public' : 'private'
+    this.tag.className = p.public ? 'card__tag card__tag--public' : 'card__tag'
+    this.title.textContent = p.title
+    this.blurb.textContent = p.blurb
+    this.chips.replaceChildren(...p.stack.map((s) => el('li', '', s)))
+    this.url = p.public && p.url ? p.url : null
+    if (this.url) this.link.href = this.url
+    else this.link.removeAttribute('href')
+    this.link.hidden = !this.url
+    this.keyHint.textContent = this.url ? 'Enter to open · Esc to close' : 'Esc to close'
+    if (this.current === null) window.addEventListener('keydown', this.onKey)
+    this.current = id
+    this.panel.hidden = false
+    this.panel.dataset.id = id
+  }
+
+  hide(): void {
+    if (this.current === null) return
+    window.removeEventListener('keydown', this.onKey)
+    this.returnFocusToGame()
+    this.current = null
+    this.url = null
+    this.panel.hidden = true
+    delete this.panel.dataset.id
+  }
+
+  dispose(): void {
+    this.hide()
+    this.panel.remove()
+  }
+
+  private handleKey(e: KeyboardEvent): void {
+    if (this.current === null) return
     if (e.key === 'Escape') {
       e.preventDefault()
-      hide()
-    } else if (e.key === 'Enter' && !e.repeat && url) {
-      // A focused control (panel close button, skip overlay link…) handles its own Enter.
+      this.hide()
+    } else if (e.key === 'Enter' && !e.repeat && this.url) {
+      // a focused control (panel close button, skip overlay link…) handles its own Enter
       if (isControl(document.activeElement)) return
       e.preventDefault()
-      window.open(url, '_blank', 'noopener')
+      window.open(this.url, '_blank', 'noopener')
     }
   }
 
-  function show(id: CardId) {
-    const p = byId.get(id)
-    if (!p) return
-    route.textContent = routeNames[p.route]
-    tag.textContent = p.public ? 'public' : 'private'
-    tag.className = p.public ? 'card__tag card__tag--public' : 'card__tag'
-    title.textContent = p.title
-    blurb.textContent = p.blurb
-    chips.replaceChildren(...p.stack.map((s) => el('li', '', s)))
-    url = p.public && p.url ? p.url : null
-    if (url) link.href = url
-    else link.removeAttribute('href')
-    link.hidden = !url
-    keyHint.textContent = url ? 'Enter to open · Esc to close' : 'Esc to close'
-    if (openId === null) window.addEventListener('keydown', onKey)
-    openId = id
-    panel.hidden = false
-    panel.dataset.id = id
-  }
-
-  function hide() {
-    if (openId === null) return
-    window.removeEventListener('keydown', onKey)
-    returnFocusToGame()
-    openId = null
-    url = null
-    panel.hidden = true
-    delete panel.dataset.id
-  }
-
-  close.addEventListener('click', hide)
-  link.addEventListener('click', () => queueMicrotask(returnFocusToGame))
-
-  return {
-    show,
-    hide,
-    get openId() {
-      return openId
-    },
-    dispose() {
-      hide()
-      panel.remove()
-    },
+  /** A mouse click on the close button or link focuses it; hand focus back to driving. */
+  private returnFocusToGame(): void {
+    if (!this.panel.contains(document.activeElement)) return
+    const scene = document.getElementById('scene')
+    if (scene) scene.focus({ preventScroll: true })
+    else (document.activeElement as HTMLElement | null)?.blur()
   }
 }

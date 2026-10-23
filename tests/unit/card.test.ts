@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createCardPanel, type CardPanel } from '../../src/ui/card'
+import { CardPanel } from '../../src/ui/card'
 
 const key = (k: string, target: EventTarget = window) =>
   target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
@@ -18,7 +18,7 @@ describe('card panel', () => {
     canvas.focus()
     open = vi.fn()
     vi.stubGlobal('open', open)
-    panel = createCardPanel(root)
+    panel = new CardPanel(root)
   })
   afterEach(() => {
     panel.dispose()
