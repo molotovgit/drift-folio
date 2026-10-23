@@ -62,38 +62,78 @@ export interface TreeSpot {
 /** Keep trees this far from any road centreline. */
 const TREE_CLEARANCE = 9
 const TREE_GRID = 8.5
+/**
+ * The square the mountain's forest grid has always covered (the terrain before
+ * it grew for the regions). Its seeded stream is replayed exactly, so mountain
+ * trees stand where they always did; the grown margins are planted separately.
+ */
+export const MOUNTAIN_FOREST_BOUNDS = { minX: -690, minZ: -300, size: 1420 } as const
+type Disc = { x: number; z: number; r: number }
 
 /**
  * Scatter maples near the roads (autumn colour where you drive) and pines
  * further up the slopes. Jittered grid, seeded, skips the town and the summit pad.
+ *
+ * Two passes. The mountain square replays its original stream: every accept
+ * or reject that draws numbers is decided as before the regions existed
+ * (distance to the mountain roads only, the mountain keep-outs `keepOut`),
+ * and the regions only filter afterwards (their roads, `regionKeepOut`, no
+ * forest in Neon Ward, maples in Lantern Valley), which never shifts the
+ * stream. The margins the terrain grew by get their own seed and the same rules.
  */
-export function treeSpots(roads: RoadNetwork, terrain: TerrainHeights, keepOut: readonly { x: number; z: number; r: number }[]): TreeSpot[] {
-  const rnd = mulberry32(2026)
+export function treeSpots(roads: RoadNetwork, terrain: TerrainHeights, keepOut: readonly Disc[], regionKeepOut: readonly Disc[] = []): TreeSpot[] {
   const out: TreeSpot[] = []
-  const { minX, minZ, size } = terrain.bounds
-  for (let gz = minZ + 20; gz < minZ + size - 20; gz += TREE_GRID) {
-    for (let gx = minX + 20; gx < minX + size - 20; gx += TREE_GRID) {
+  const inside = (d: Disc, x: number, z: number) => Math.hypot(d.x - x, d.z - z) < d.r
+  // dense near roads, thinner far away
+  const density = (d: number) => (d < 30 ? 0.55 : d < 70 ? 0.35 : 0.12)
+  const plant = (rnd: () => number, x: number, z: number, d: number) => {
+    // Lantern Valley is a maple valley (the roll is drawn either way)
+    const maple = (d < 45 ? rnd() < 0.75 : rnd() < 0.25) || BIOMES.weight('temple', x, z) > 0.5
+    const model = maple ? `tree_maple_${Math.floor(rnd() * 4)}` : `tree_pine_${Math.floor(rnd() * 3)}`
+    const yaw = rnd() * Math.PI * 2
+    const scale = 0.8 + rnd() * 0.5
+    // region filters, after every draw: the region roads, the region props, no forest in Neon Ward
+    if ((roads.index.nearest(x, z, TREE_CLEARANCE)?.dist ?? Infinity) < TREE_CLEARANCE) return
+    if (regionKeepOut.some((k) => inside(k, x, z)) || positionRoll(x, z, 91) < BIOMES.weight('city', x, z)) return
+    out.push({ model, x, y: terrain.heightAt(x, z) - 0.2, z, yaw, scale })
+  }
+  const m = MOUNTAIN_FOREST_BOUNDS
+  const inSquare = (x: number, z: number) => x >= m.minX + 20 && x < m.minX + m.size - 20 && z >= m.minZ + 20 && z < m.minZ + m.size - 20
+  const rnd = mulberry32(2026)
+  for (let gz = m.minZ + 20; gz < m.minZ + m.size - 20; gz += TREE_GRID) {
+    for (let gx = m.minX + 20; gx < m.minX + m.size - 20; gx += TREE_GRID) {
       const x = gx + (rnd() - 0.5) * TREE_GRID * 0.9
       const z = gz + (rnd() - 0.5) * TREE_GRID * 0.9
       const roll = rnd()
-      const hit = roads.index.nearest(x, z, 70)
-      const d = hit ? hit.dist : 999
-      if (d < TREE_CLEARANCE) continue
-      // dense near roads, thinner far away
-      const density = d < 30 ? 0.55 : d < 70 ? 0.35 : 0.12
-      if (roll > density) continue
-      if (keepOut.some((k) => Math.hypot(k.x - x, k.z - z) < k.r)) continue
-      // Lantern Valley is a maple valley
-      const maple = (d < 45 ? rnd() < 0.75 : rnd() < 0.25) || BIOMES.weight('temple', x, z) > 0.5
-      const model = maple ? `tree_maple_${Math.floor(rnd() * 4)}` : `tree_pine_${Math.floor(rnd() * 3)}`
-      const yaw = rnd() * Math.PI * 2
-      const scale = 0.8 + rnd() * 0.5
-      // no forest in Neon Ward (a position roll after every draw, so the mountain's trees never reshuffle)
-      if (positionRoll(x, z, 91) < BIOMES.weight('city', x, z)) continue
-      out.push({ model, x, y: terrain.heightAt(x, z) - 0.2, z, yaw, scale })
+      const d = mountainRoadDistance(roads, x, z)
+      if (d < TREE_CLEARANCE || keepOut.some((k) => inside(k, x, z)) || roll > density(d)) continue
+      plant(rnd, x, z, d)
+    }
+  }
+  // the margins the terrain grew by
+  const grown = mulberry32(2027)
+  const { minX, minZ, size } = terrain.bounds
+  for (let gz = minZ + 20; gz < minZ + size - 20; gz += TREE_GRID) {
+    for (let gx = minX + 20; gx < minX + size - 20; gx += TREE_GRID) {
+      const x = gx + (grown() - 0.5) * TREE_GRID * 0.9
+      const z = gz + (grown() - 0.5) * TREE_GRID * 0.9
+      const roll = grown()
+      if (inSquare(gx, gz)) continue
+      const d = roads.index.nearest(x, z, 70)?.dist ?? 999
+      if (d < TREE_CLEARANCE || keepOut.some((k) => inside(k, x, z)) || roll > density(d)) continue
+      plant(grown, x, z, d)
     }
   }
   return out
+}
+
+/** Distance to the nearest mountain road (region roads ignored), as the forest measured it before the regions. */
+function mountainRoadDistance(roads: RoadNetwork, x: number, z: number): number {
+  const hit = roads.index.nearest(x, z, 70)
+  if (!hit) return 999
+  const region = (r: string) => r === 'temple' || r === 'city'
+  if (!region(hit.edge.route)) return hit.dist
+  return roads.index.nearestPerEdge(x, z, 70).find((h) => !region(h.edge.route))?.dist ?? 999
 }
 
 /** Hand-placed landmarks: torii over the summit road, signposts at the forks, a few town buildings. */

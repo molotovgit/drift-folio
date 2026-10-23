@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu'
 import { clamp } from '../core/math'
 import { palette } from '../render/palette'
-import { BIOMES, type BiomeMap } from './biomes'
+import { BIOMES, type BiomeMap, type BiomeWeights } from './biomes'
 import type { RoadNetwork } from './roadNetwork'
 import { ValueNoise } from './terrain'
 
@@ -61,6 +61,8 @@ export class GroundPaint {
   private readonly cityPavement = new THREE.Color(BIOME_GROUND.cityPavement)
   /** scratch: the shoulder colour at the vertex being painted */
   private readonly shoulder = new THREE.Color()
+  /** scratch biome weights at the vertex being painted */
+  private readonly weights: BiomeWeights = { mountain: 0, temple: 0, city: 0 }
   private readonly canopy = new Map<number, Canopy[]>()
 
   constructor(
@@ -83,7 +85,7 @@ export class GroundPaint {
     out.lerp(this.grass, 0.75 * smooth(0.4, 0.62, this.grassNoise.fbm(x / 55, z / 55, 3)))
     const litter = Math.max(0, this.litterNoise.fbm(x / 30, z / 30, 3) - 0.56) * 2.4
     out.lerp(this.leaves, Math.min(0.75, litter))
-    const { temple, city } = this.biomes.biomeAt(x, z)
+    const { temple, city } = this.biomes.biomeAt(x, z, this.weights)
     // the valley: mossy ground with brighter green patches where the mountain has dry grass
     if (temple > 0) out.lerp(this.templeGround, 0.8 * temple).lerp(this.templeMoss, 0.6 * temple * smooth(0.45, 0.65, this.grassNoise.fbm(x / 40, z / 40, 3)))
     // the ward: dark paving everywhere

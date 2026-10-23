@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
 import type { QualityTier } from '../render/post'
 import { surfaceOf } from '../vehicle/wheel'
-import { CITY_TIERS, OVERPASS } from './cityLayout'
+import { CITY_TIERS, OVERPASS, PILLAR } from './cityLayout'
 import { CityModels } from './cityModels'
 import { InstancedProps, placeMatrix } from './instancedProps'
 import { NeonAtlas } from './neonAtlas'
@@ -14,6 +14,8 @@ import { TempleModels } from './templeModels'
 import type { TerrainHeights } from './terrain'
 import { VegetationModels } from './vegetationModels'
 
+/** merged region meshes and the biggest region props are drawn only this close to the camera (the fog is opaque by ~420 m) */
+export const REGION_DRAW_DISTANCE = 600
 /** How each instanced region kind is drawn. */
 interface KindLook {
   model: () => THREE.Object3D
@@ -23,9 +25,9 @@ interface KindLook {
 }
 
 const LOOKS: Readonly<Record<TempleKind | 'vending', KindLook>> = {
-  gate: { model: () => TempleModels.gate(), cullDistance: 600, shadows: true, tiers: TEMPLE_TIERS.gate },
-  hall: { model: () => TempleModels.hall(), cullDistance: 700, shadows: true, tiers: TEMPLE_TIERS.hall },
-  pagoda: { model: () => TempleModels.pagoda(), cullDistance: 700, shadows: true, tiers: TEMPLE_TIERS.pagoda },
+  gate: { model: () => TempleModels.gate(), cullDistance: REGION_DRAW_DISTANCE, shadows: true, tiers: TEMPLE_TIERS.gate },
+  hall: { model: () => TempleModels.hall(), cullDistance: REGION_DRAW_DISTANCE, shadows: true, tiers: TEMPLE_TIERS.hall },
+  pagoda: { model: () => TempleModels.pagoda(), cullDistance: REGION_DRAW_DISTANCE, shadows: true, tiers: TEMPLE_TIERS.pagoda },
   bridge: { model: () => TempleModels.bridge(), cullDistance: 260, shadows: false, tiers: TEMPLE_TIERS.bridge },
   lantern: { model: () => TempleModels.lantern(), cullDistance: 220, shadows: false, tiers: TEMPLE_TIERS.lantern },
   torii: { model: () => TempleModels.torii(), cullDistance: 280, shadows: false, tiers: TEMPLE_TIERS.torii },
@@ -41,7 +43,9 @@ const VENDING_TINTS = ['#d23a3a', '#3a6ad2', '#f0f0f0', '#e0b030'].map((c) => ne
  * set per valley kind and for the vending machines (thinned per tier like the
  * roadside plants), and the ward's merged static meshes (buildings, signs,
  * expressway, pavements, the wet sheen) plus the valley's water. Low tier
- * hides the small secondary signs and the wet sheen.
+ * goes without the small signs and the wet sheen (CITY_TIERS.detail). The
+ * merged meshes are far past the fog from most of the mountain, so each is
+ * drawn only within REGION_DRAW_DISTANCE of the camera (`update`).
  */
 export class RegionProps {
   /** culled instanced sets (re-culled by the world each frame) */
@@ -49,58 +53,84 @@ export class RegionProps {
   /** static meshes */
   readonly group = new THREE.Group()
   private readonly thinned: { set: InstancedProps; tiers: Readonly<Record<QualityTier, number>> }[] = []
-  /** shown on mid and high only */
-  private readonly detail: THREE.Object3D[] = []
+  /** every merged mesh with its world bounding box (tighter than a sphere round a long street), and whether it is tier detail */
+  private readonly statics: { mesh: THREE.Mesh; box: THREE.Box3; detail: boolean }[] = []
+  private tierShowsDetail = true
 
   private constructor() {
     this.group.name = 'regions'
   }
 
-  /** Build the props `tier` draws (lower tiers thin them further at runtime, see `setTier`). */
-  static build(layouts: RegionLayouts, roads: RoadNetwork, terrain: TerrainHeights, tier: QualityTier): RegionProps {
+  /**
+   * Build the props `tier` draws (lower tiers thin them further at runtime, see
+   * `setTier`; the governor only steps down, so detail a tier never shows is never built).
+   */
+  static async build(layouts: RegionLayouts, roads: RoadNetwork, terrain: TerrainHeights, tier: QualityTier): Promise<RegionProps> {
     const props = new RegionProps()
     const { temple, city } = layouts
     for (const kind of Object.keys(temple.spots) as TempleKind[]) props.instanced(kind, temple.forTier(kind, tier))
+    const vending = city.vendingForTier(tier)
     props.instanced(
       'vending',
-      city.vendingForTier(tier),
-      city.vendingForTier(tier).map((v) => VENDING_TINTS[Math.floor(v.keep * 997) % VENDING_TINTS.length]),
+      vending,
+      vending.map((v) => VENDING_TINTS[Math.floor(v.keep * 997) % VENDING_TINTS.length]),
     )
+    // the sign atlas letters its band signs in the display face: wait for it like the billboards do
+    await NeonAtlas.ready()
     const [facade, glow] = NeonAtlas.facade()
     const atlas = NeonAtlas.signs()
-    const statics: (THREE.Object3D | null)[] = [
-      CityModels.buildings(city.buildings, [facade, glow]),
+    props.add(CityModels.buildings(city.buildings, [facade, glow]), false)
+    props.add(
       CityModels.signs(
         city.signs.filter((s) => s.primary),
         atlas,
         'city_signs',
       ),
-      ...(CityModels.expressway(city, terrain) ?? []),
-      RegionSurfaces.pavements(roads).mesh,
-      RegionSurfaces.water(),
-    ]
-    for (const o of statics) if (o) props.group.add(o)
-    const detail = [
-      CityModels.signs(
-        city.signs.filter((s) => !s.primary),
-        atlas,
-        'city_signs_small',
-      ),
-      RegionSurfaces.wetSheen(roads, city.signs),
-    ]
-    for (const o of detail) {
-      if (!o) continue
-      props.group.add(o)
-      props.detail.push(o)
+      false,
+    )
+    for (const m of CityModels.expressway(city, terrain) ?? []) props.add(m, false)
+    props.add(RegionSurfaces.pavements(roads).mesh, false)
+    props.add(RegionSurfaces.water(), false)
+    if (CITY_TIERS.detail[tier] > 0) {
+      props.add(
+        CityModels.signs(
+          city.signs.filter((s) => !s.primary),
+          atlas,
+          'city_signs_small',
+        ),
+        true,
+      )
+      props.add(RegionSurfaces.wetSheen(roads, city.signs), true)
     }
     props.setTier(tier)
     return props
   }
 
-  /** Thin the instanced kinds to their fraction for `tier`; hide the detail meshes on low. */
+  /** Thin the instanced kinds to their fraction for `tier`; drop the detail meshes where the tier has none. */
   setTier(tier: QualityTier): void {
     for (const { set, tiers } of this.thinned) set.setThinning(tiers[tier])
-    for (const o of this.detail) o.visible = tier !== 'low'
+    this.tierShowsDetail = CITY_TIERS.detail[tier] > 0
+    for (const s of this.statics) if (s.detail && !this.tierShowsDetail) s.mesh.visible = false
+  }
+
+  /** Per frame: draw each merged mesh only while the camera is within REGION_DRAW_DISTANCE of it. */
+  update(camera: THREE.Camera): void {
+    for (const s of this.statics) {
+      const near = s.box.distanceToPoint(camera.position) < REGION_DRAW_DISTANCE
+      s.mesh.visible = near && (!s.detail || this.tierShowsDetail)
+    }
+  }
+
+  /** How many merged meshes are drawn now (for tests/budgets). */
+  get visibleStatics(): number {
+    return this.statics.filter((s) => s.mesh.visible).length
+  }
+
+  private add(mesh: THREE.Mesh | null, detail: boolean): void {
+    if (!mesh) return
+    mesh.geometry.computeBoundingBox()
+    this.statics.push({ mesh, box: mesh.geometry.boundingBox!.clone(), detail })
+    this.group.add(mesh)
   }
 
   /**
@@ -130,7 +160,7 @@ export class RegionProps {
     }
     for (const p of city.pillars) {
       const ground = terrain.heightAt(p.x, p.z) - 0.5
-      solid(p.x, ground, p.z, 1, (city.deckY - ground) / 2, 1.4)
+      solid(p.x, ground, p.z, PILLAR.hx, (city.deckY - ground) / 2, PILLAR.hz)
     }
     for (const z of [OVERPASS.z0, OVERPASS.z1]) {
       const ground = terrain.heightAt(OVERPASS.x, z) - 0.5

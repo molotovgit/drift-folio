@@ -2,6 +2,7 @@ import type { QualityTier } from '../render/post'
 import { BIOMES } from './biomes'
 import { mulberry32 } from './dressing'
 import { leftOf } from './roadMesh'
+import { SAMPLE_SPACING } from './roadLayout'
 import type { RoadEdge } from './roadNetwork'
 import type { Disc, SiteChecker } from './siteChecker'
 import type { PropSpot } from './templeLayout'
@@ -42,6 +43,12 @@ export interface NeonSign {
 
 /** The elevated expressway over the ward: a straight deck along x = OVERPASS.x. */
 export const OVERPASS = { x: 446, z0: 935, z1: 1335, width: 12, clearance: 9.5, span: 22 }
+/** an expressway pillar's half-size across (x) and along (z) the deck */
+export const PILLAR = { hx: 1, hz: 1.4 }
+/** ward pavements run from the road edge to this far from the centreline */
+export const PAVE_OUTER = 8
+/** pillars stand clear of the pavements by a step */
+const PILLAR_CLEARANCE = PAVE_OUTER + 1.5 + PILLAR.hz
 /** front faces of the street blocks stand this far from the centreline (8 m of pavement and forecourt) */
 export const CITY_FRONT = 12.5
 /** background towers stand at least this far from every street */
@@ -55,9 +62,10 @@ export const BLADE_CELLS = 8
 export const BAND_CELLS = 8
 
 /** Fraction of small props kept per tier (buildings and big signs stay on every tier). */
-export const CITY_TIERS: Readonly<Record<'vending' | 'secondarySigns', Readonly<Record<QualityTier, number>>>> = {
+export const CITY_TIERS: Readonly<Record<'vending' | 'detail', Readonly<Record<QualityTier, number>>>> = {
   vending: { high: 1, mid: 0.7, low: 0.4 },
-  secondarySigns: { high: 1, mid: 1, low: 0 },
+  // the small signs and the wet sheen: shown (1) or not (0)
+  detail: { high: 1, mid: 1, low: 0 },
 }
 
 /**
@@ -100,10 +108,13 @@ export class CityLayout {
       top = Math.max(top, hit ? hit.point.y : this.site.terrain.heightAt(OVERPASS.x, z))
     }
     for (let z = OVERPASS.z0; z <= OVERPASS.z1; z += OVERPASS.span) {
-      if (this.site.roadDistance(OVERPASS.x, z, 12) < 9) continue
+      // the whole pillar clear of the pavement plus a step
+      if (this.site.roadDistance(OVERPASS.x, z, PILLAR_CLEARANCE + 2) < PILLAR_CLEARANCE) continue
       this.pillars.push({ x: OVERPASS.x, z })
       this.site.claim({ x: OVERPASS.x, z, r: 2 })
     }
+    // no trees or plants under the deck or in its abutments
+    for (let z = OVERPASS.z0; z <= OVERPASS.z1; z += 8) this.site.claim({ x: OVERPASS.x, z, r: OVERPASS.width / 2 + 1 })
     return top + OVERPASS.clearance
   }
 
@@ -117,7 +128,7 @@ export class CityLayout {
       const gap = 1.5 + this.rnd() * 3
       const tint = this.rnd()
       const signRolls = [this.rnd(), this.rnd(), this.rnd(), this.rnd(), this.rnd()]
-      const i = Math.min(e.points.length - 1, Math.round((d + w / 2) / 2))
+      const i = Math.min(e.points.length - 1, Math.max(0, Math.round((d + w / 2) / SAMPLE_SPACING)))
       d += w + gap
       const p = e.points[i]
       const t = e.tangent(i)

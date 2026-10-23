@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu'
 import { ToonMaterials } from '../render/toon'
-import { BAND_CELLS, BLADE_CELLS, OVERPASS, type Building, type CityLayout, type NeonSign } from './cityLayout'
+import { BAND_CELLS, BLADE_CELLS, OVERPASS, PILLAR, type Building, type CityLayout, type NeonSign } from './cityLayout'
 import { FACADE } from './neonAtlas'
 import { BoxWriter, RegionMaterials } from './regionMaterials'
 import type { TerrainHeights } from './terrain'
@@ -142,7 +142,7 @@ export class CityModels {
     }
     for (const p of city.pillars) {
       const ground = terrain.heightAt(p.x, p.z) - 0.5
-      concrete.box(frame(p.x, ground, p.z), 2, top - 1.3 - ground, 2.8, dark)
+      concrete.box(frame(p.x, ground, p.z), PILLAR.hx * 2, top - 1.3 - ground, PILLAR.hz * 2, dark)
       concrete.box(frame(p.x, top - 2.3, p.z), OVERPASS.width - 1, 1, 2.2, grey)
     }
     // abutments where the deck ends

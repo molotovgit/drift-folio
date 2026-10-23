@@ -15,6 +15,8 @@ export const FAKE_BRANDS = ['HOSHIYA', 'KUMODO', 'NEONOKI', 'TSUKIBA', 'RAMEN 88
 export const FACADE = { size: 512, cols: 8, floors: 6, shopRow: 128, shops: 4 } as const
 /** Sign atlas: BLADE_CELLS tall blade cells across the top half, BAND_CELLS wide bands (2 × 4) in the bottom half. */
 export const SIGN_ATLAS = { size: 1024 } as const
+/** the display face the band signs are lettered in */
+const SIGN_FONT = '"Barlow Condensed", "Arial Narrow", sans-serif'
 
 /**
  * Canvas textures for Neon Ward: building facades (a colour map whose frame
@@ -23,6 +25,11 @@ export const SIGN_ATLAS = { size: 1024 } as const
  * load paints the same city. Built in the browser only (needs a 2D canvas).
  */
 export class NeonAtlas {
+  /** Wait for the display face the band signs are lettered in (like the billboards do); never fails. */
+  static async ready(): Promise<void> {
+    await document.fonts?.load(`italic 800 64px ${SIGN_FONT}`).catch(() => undefined)
+  }
+
   /** [colour map, emissive map] for building facades. */
   static facade(): [THREE.CanvasTexture, THREE.CanvasTexture] {
     const rnd = mulberry32(611)
@@ -111,7 +118,7 @@ export class NeonAtlas {
       // a glyph badge, then the made-up brand name
       NeonAtlas.glyph(g, x + 22, y + 22, chh - 44, accent, rnd)
       g.save()
-      g.font = `italic 800 ${Math.round(chh * 0.42)}px "Barlow Condensed", "Arial Narrow", sans-serif`
+      g.font = `italic 800 ${Math.round(chh * 0.42)}px ${SIGN_FONT}`
       g.textBaseline = 'middle'
       g.fillStyle = '#ffffff'
       g.shadowColor = tone

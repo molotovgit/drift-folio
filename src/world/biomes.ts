@@ -106,9 +106,16 @@ export class BiomeMap {
     this.shapes = regions.map((r) => new RegionShape(r))
   }
 
-  /** Weights of the three biomes at (x, z), summing to 1. */
-  biomeAt(x: number, z: number): BiomeWeights {
-    const w: BiomeWeights = { mountain: 0, temple: 0, city: 0 }
+  /** scratch for `weight` and `dominant` (no allocation per lookup) */
+  private readonly scratch: BiomeWeights = { mountain: 0, temple: 0, city: 0 }
+
+  /**
+   * Weights of the three biomes at (x, z), summing to 1. Pass `out` to reuse
+   * an object in hot loops (terrain and ground paint call this per vertex).
+   */
+  biomeAt(x: number, z: number, out?: BiomeWeights): BiomeWeights {
+    const w: BiomeWeights = out ?? { mountain: 0, temple: 0, city: 0 }
+    w.mountain = w.temple = w.city = 0
     for (const s of this.shapes) w[s.region.biome] = Math.max(w[s.region.biome], s.weight(x, z))
     // regions never overlap by design; if their bands ever do, share the point between them
     const claimed = w.temple + w.city
@@ -122,12 +129,12 @@ export class BiomeMap {
 
   /** One biome's weight at (x, z). */
   weight(biome: Biome, x: number, z: number): number {
-    return this.biomeAt(x, z)[biome]
+    return this.biomeAt(x, z, this.scratch)[biome]
   }
 
   /** The biome with the largest weight at (x, z). */
   dominant(x: number, z: number): Biome {
-    const w = this.biomeAt(x, z)
+    const w = this.biomeAt(x, z, this.scratch)
     return w.city > w.temple && w.city > w.mountain ? 'city' : w.temple > w.mountain ? 'temple' : 'mountain'
   }
 }

@@ -1,5 +1,5 @@
 import { clamp, lerp } from '../core/math'
-import { BIOMES, type BiomeMap } from './biomes'
+import { BIOMES, type BiomeMap, type BiomeWeights } from './biomes'
 import { LotSurface } from './lotSurface'
 import type { RoadHit, RoadNetwork } from './roadNetwork'
 import type { Channel } from './shortcutLayout'
@@ -92,6 +92,8 @@ export class TerrainHeights {
   /** (cells+1)² heights, row-major: index = iz * (cells+1) + ix */
   readonly heights: Float32Array
   private readonly noise = new ValueNoise(7)
+  /** scratch biome weights (looked up per vertex) */
+  private readonly weights: BiomeWeights = { mountain: 0, temple: 0, city: 0 }
   private readonly channels: { c: Channel; box: ChannelBox }[]
   private readonly lots: LotSurface[]
 
@@ -146,7 +148,7 @@ export class TerrainHeights {
     const away = hit ? smooth(CARVE_FLAT + 4, 90, hit.dist) : 1
     const swell = (this.noise.fbm(x / 260, z / 260, 3) - 0.35) * 70
     const ridges = (this.noise.fbm(x / 70, z / 70, 4) - 0.5) * 22
-    const w = this.biomes.biomeAt(x, z)
+    const w = this.biomes.biomeAt(x, z, this.weights)
     const natural = base + (swell + ridges) * away * (1 - CITY_FLATTEN * w.city - TEMPLE_FLATTEN * w.temple)
     const withLots = this.carveChannels(x, z, this.flattenLots(x, z, natural))
     if (!hit) return Math.min(withLots, this.floorAt(x, z) - ROAD_LIFT)

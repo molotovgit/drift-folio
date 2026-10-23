@@ -1,4 +1,5 @@
-import { about, projects, routeNames } from '../content/projects'
+import { about, projects } from '../content/projects'
+import { placeName } from '../world/cornerPlacements'
 import { SafeUrl } from '../util/safeUrl'
 
 export type SkipReason = 'user' | 'no-gpu' | 'slow' | 'context-lost'
@@ -106,7 +107,7 @@ export class SkipOverlay {
     const card = el('article', 'card')
     card.dataset.id = p.id
     const top = el('div', 'card__top')
-    top.append(el('span', 'card__route', routeNames[p.route]), el('span', p.public ? 'card__tag card__tag--public' : 'card__tag', p.public ? 'public' : 'private'))
+    top.append(el('span', 'card__route', placeName(p.id)), el('span', p.public ? 'card__tag card__tag--public' : 'card__tag', p.public ? 'public' : 'private'))
     const chips = el('ul', 'card__stack')
     for (const s of p.stack) chips.append(el('li', undefined, s))
     card.append(top, el('h2', 'card__title', p.title), el('p', 'card__blurb', p.blurb), chips)

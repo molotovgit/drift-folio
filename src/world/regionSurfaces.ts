@@ -1,15 +1,14 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
 import { surfaceOf } from '../vehicle/wheel'
-import type { NeonSign } from './cityLayout'
+import { PAVE_OUTER, type NeonSign } from './cityLayout'
 import { NEON } from './neonAtlas'
 import { RegionMaterials } from './regionMaterials'
 import { POND, RIVER_WIDTH, valleyRiver } from './riverLayout'
 import type { RoadEdge, RoadNetwork } from './roadNetwork'
 import { leftOf } from './spline'
 
-/** Pavements run from the road edge to this far out; the kerb lip is the first KERB_W of it. */
-const PAVE_OUTER = 8
+/** Pavements run from the road edge out to PAVE_OUTER (cityLayout); the kerb lip is the first KERB_W of it. */
 const KERB_W = 0.22
 const KERB_H = 0.08
 /** pavement (and its collider) sits this far above the road edge: under the 2 cm a tyre feels as a step */
@@ -25,6 +24,12 @@ const WATER_DEPTH = 0.3
 
 type Row = THREE.Vector3[]
 
+/** The ward's pavements: one mesh (null if none) and the trimesh its collider is built from. */
+export interface Pavements {
+  mesh: THREE.Mesh | null
+  collider: { positions: Float32Array; indices: Uint32Array }
+}
+
 /**
  * Thin surfaces laid along the regions' roads and river: Neon Ward's
  * pavements and kerbs (with 'road' colliders, so a slide onto the pavement is
@@ -32,8 +37,17 @@ type Row = THREE.Vector3[]
  * water. Each is one mesh.
  */
 export class RegionSurfaces {
+  private static readonly paved = new WeakMap<RoadNetwork, Pavements>()
+
+  /** The ward's pavements: the visible kerbs and slabs and the collider surface (built once per network). */
+  static pavements(roads: RoadNetwork): Pavements {
+    let p = RegionSurfaces.paved.get(roads)
+    if (!p) RegionSurfaces.paved.set(roads, (p = RegionSurfaces.buildPavements(roads)))
+    return p
+  }
+
   /** Pavement rows (outer → inner offsets) on both sides of every city street, as quads between valid samples. */
-  static pavements(roads: RoadNetwork): { mesh: THREE.Mesh | null; collider: { positions: Float32Array; indices: Uint32Array } } {
+  private static buildPavements(roads: RoadNetwork): Pavements {
     const kerb = new StripWriter()
     const pave = new StripWriter()
     const solid = new StripWriter()

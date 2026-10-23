@@ -67,7 +67,7 @@ export class MountainWorld {
     const forestKeepOut = treeKeepOut(this.roads)
     // the roadside layout adds the regions' keep-outs itself; the forest gets them here
     this.roadside = new RoadsideLayout(this.roads, this.terrain, forestKeepOut)
-    this.trees = [...treeSpots(this.roads, this.terrain, [...forestKeepOut, ...this.regions.keepOuts]), ...this.roadside.trees]
+    this.trees = [...treeSpots(this.roads, this.terrain, forestKeepOut, this.regions.keepOuts), ...this.roadside.trees]
     const canopies = [
       ...this.trees.map((t) => ({ x: t.x, z: t.z, r: 5 * t.scale })),
       ...this.roadside.items.filter((i) => i.kind === 'bamboo').map((i) => ({ x: i.x, z: i.z, r: 3 * i.scale })),
@@ -89,6 +89,7 @@ export class MountainWorld {
   /** Per-frame: re-cull instanced props against the camera (a few sets per frame). */
   update(camera: THREE.Camera): void {
     this.culler.update(this.instanced, camera)
+    this.regionProps?.update(camera)
   }
 
   /**
@@ -133,7 +134,7 @@ export class MountainWorld {
       PropPlacer.place(this.scene, [...landmarks(this.roads, this.terrain), ...this.regions.temple.landmarks]),
     ])
     // the regions' props are procedural (no loading): the valley's temple, paddies and lanterns, the ward's blocks and neon
-    const regionProps = RegionProps.build(this.regions, this.roads, this.terrain, tier)
+    const regionProps = await RegionProps.build(this.regions, this.roads, this.terrain, tier)
     this.scene.add(regionProps.group)
     this.instanced.push(...regionProps.sets)
     this.regionProps = regionProps

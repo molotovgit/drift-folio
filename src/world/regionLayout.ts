@@ -19,7 +19,8 @@ import type { EdgeDef, NodeDef } from './roadLayout'
  * ghost lap is pinned to those surfaces). Each new road end leaves its node at
  * an angle that keeps the existing through-road pairings there, and with about
  * the grade the node's plane already has that way, so the existing roads at
- * the summit and the town's west end keep their shape.
+ * the summit and the town's west end (summit, town-aw, return) barely move:
+ * at most 3 cm in height and 0.45 % in camber near those nodes.
  */
 
 const N = (id: string, x: number, y: number, z: number): NodeDef => ({ id, x, y, z })

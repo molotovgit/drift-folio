@@ -1,11 +1,11 @@
 import * as THREE from 'three/webgpu'
-import { projects, routeNames, type CardId, type ProjectCard } from '../content/projects'
+import { projects, type CardId, type ProjectCard } from '../content/projects'
 import { ApexTriggers, type ApexResult } from '../game/triggers'
 import { ModelLibrary } from '../render/loadModel'
 import { palette } from '../render/palette'
 import { ToonMaterials } from '../render/toon'
 import type { Telemetry } from '../vehicle/driftCar'
-import { APEX_RADIUS, cornerSpots, type CornerSpot } from './cornerLayout'
+import { APEX_RADIUS, cornerSpots, placeName, type CornerSpot } from './cornerLayout'
 import type { RoadNetwork } from './roadNetwork'
 
 const PANEL_W = 1024
@@ -82,7 +82,7 @@ export class ProjectCorners {
 
     g.fillStyle = palette.hudGold
     g.font = `600 40px ${DISPLAY_FONT}`
-    g.fillText(`${card.id} · ${routeNames[card.route].toUpperCase()}`, 56, 92)
+    g.fillText(`${card.id} · ${placeName(card.id).toUpperCase()}`, 56, 92)
     g.textAlign = 'right'
     g.fillStyle = card.public ? palette.hudGold : palette.hudText
     g.fillText(card.public ? 'PUBLIC' : 'PRIVATE', PANEL_W - 56, 92)

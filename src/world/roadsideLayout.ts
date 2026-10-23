@@ -1,5 +1,5 @@
 import type { QualityTier } from '../render/post'
-import { BIOMES, positionRoll } from './biomes'
+import { BIOMES, positionRoll, type BiomeWeights } from './biomes'
 import { fenceSpots } from './breakables'
 import { cornerSpots } from './cornerLayout'
 import { mulberry32 } from './dressing'
@@ -216,7 +216,7 @@ export class RoadsideLayout {
    * the seeded stream, so the mountain (weight 1, always kept) never reshuffles.
    */
   static biomeKeeps(kind: RoadsideKind, x: number, z: number): boolean {
-    const w = BIOMES.biomeAt(x, z)
+    const w = BIOMES.biomeAt(x, z, BIOME_SCRATCH)
     if (w.mountain >= 1) return true
     const f = BIOME_DENSITY[kind]
     return positionRoll(x, z, 31 + Math.round(PATCH_OFFSET[kind])) < w.mountain + w.temple * f.temple + w.city * f.city
@@ -307,3 +307,5 @@ export class RoadsideLayout {
 
 /** Per-kind offset into the patch noise so different kinds form different patches. */
 const PATCH_OFFSET = Object.fromEntries((Object.keys(ROADSIDE_KINDS) as RoadsideKind[]).map((k, i) => [k, i * 17.3])) as Record<RoadsideKind, number>
+/** scratch biome weights for the per-candidate density roll */
+const BIOME_SCRATCH: BiomeWeights = { mountain: 0, temple: 0, city: 0 }

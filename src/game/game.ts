@@ -284,7 +284,8 @@ export class Game {
       wheelsOnGround: t.wheelsOnGround,
       surface: audioSurface(t),
       horn: this.controls.horn,
-      zone: this.session.route === 'town' ? 'town' : 'mountain',
+      // Neon Ward's streets sound like the town's: sheltered from the wind by the blocks
+      zone: this.session.route === 'town' || this.session.route === 'city' ? 'town' : 'mountain',
     })
   }
 

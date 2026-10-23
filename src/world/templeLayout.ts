@@ -2,6 +2,7 @@ import type { QualityTier } from '../render/post'
 import { BIOMES } from './biomes'
 import { mulberry32, type Placement } from './dressing'
 import { leftOf } from './roadMesh'
+import { SAMPLE_SPACING } from './roadLayout'
 import type { RoadEdge } from './roadNetwork'
 import { valleyRiver } from './riverLayout'
 import type { SiteChecker } from './siteChecker'
@@ -86,6 +87,11 @@ export class TempleLayout {
     return this.spots[kind].filter((s) => s.keep < TEMPLE_TIERS[kind][tier])
   }
 
+  /** Index of the sample `d` metres along an edge (clamped to the edge). */
+  static sampleAt(e: RoadEdge, d: number): number {
+    return Math.min(e.points.length - 1, Math.max(0, Math.round(d / SAMPLE_SPACING)))
+  }
+
   private push(kind: TempleKind, x: number, z: number, yaw: number, y = this.site.terrain.heightAt(x, z), scale = 1): void {
     this.spots[kind].push({ x, y, z, yaw, scale, keep: this.rnd() })
   }
@@ -154,7 +160,7 @@ export class TempleLayout {
   private lanterns(): void {
     for (const e of this.edges) {
       for (let d = LANTERN_EVERY / 2, k = 0; d < e.length; d += LANTERN_EVERY, k++) {
-        const i = Math.min(e.points.length - 1, Math.round(d / 2))
+        const i = TempleLayout.sampleAt(e, d)
         const p = e.points[i]
         const t = e.tangent(i)
         const l = leftOf(t.x, t.y)
@@ -198,7 +204,7 @@ export class TempleLayout {
     const r = Math.hypot(half.a, half.c)
     for (const e of this.edges) {
       for (let d = PADDY.step; d < e.length - PADDY.step; d += PADDY.step) {
-        const i = Math.round(d / 2)
+        const i = TempleLayout.sampleAt(e, d)
         const p = e.points[i]
         const t = e.tangent(i)
         const l = leftOf(t.x, t.y)
@@ -225,7 +231,7 @@ export class TempleLayout {
   private groves(): void {
     for (const e of this.edges) {
       for (let d = 7; d < e.length; d += 14) {
-        const i = Math.round(d / 2)
+        const i = TempleLayout.sampleAt(e, d)
         const p = e.points[i]
         const t = e.tangent(i)
         const l = leftOf(t.x, t.y)

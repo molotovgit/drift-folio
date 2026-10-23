@@ -1,4 +1,5 @@
-import { projects, routeNames, type CardId, type ProjectCard } from '../content/projects'
+import { projects, type CardId, type ProjectCard } from '../content/projects'
+import { placeName } from '../world/cornerPlacements'
 import '../styles/card.css'
 import { SafeUrl } from '../util/safeUrl'
 import { skipOverlay } from './skip'
@@ -89,7 +90,7 @@ export class CardPanel {
   show(id: CardId): void {
     const p = BY_ID.get(id)
     if (!p) return
-    this.route.textContent = routeNames[p.route]
+    this.route.textContent = placeName(p.id)
     this.tag.textContent = p.public ? 'public' : 'private'
     this.tag.className = p.public ? 'card__tag card__tag--public' : 'card__tag'
     this.title.textContent = p.title
