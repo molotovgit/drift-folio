@@ -12,14 +12,18 @@ import { SceneLighting } from '../render/lighting'
 import { LightPool } from '../render/lightPool'
 import { PostPipeline, type QualityTier } from '../render/post'
 import { SkyDome } from '../render/sky'
+import { Hud } from '../ui/hud'
 import { skipOverlay } from '../ui/skip'
+import { SafeStorage } from '../util/storage'
 import { BoxCarVisual, FdCarVisual, type CarVisual } from '../vehicle/carVisual'
-import { DriftCar, type Telemetry } from '../vehicle/driftCar'
+import { DriftCar, surfaceOf, type Telemetry } from '../vehicle/driftCar'
 import type { Checkpoint } from '../world/checkpoints'
 import { greyboxDressing, PropPlacer } from '../world/dressing'
 import { Greybox } from '../world/greybox'
 import { MountainWorld } from '../world/mountainWorld'
 import type { GameOptions } from './options'
+import { RouteRuns } from './routeRun'
+import { DriftSession } from './session'
 
 const REAR_WHEELS = [2, 3] as const
 const WIND = new THREE.Vector3(0.9, 0, 0.4)
@@ -47,6 +51,10 @@ export class Game {
   private readonly mountain: MountainWorld | null
   private readonly pad: Greybox | null
   private controls: ControlState = idleControls()
+  private readonly session: DriftSession
+  /** Rapier reports chassis contacts above the force threshold here (crash rule) */
+  private readonly events = new RAPIER.EventQueue(true)
+  private railHit = false
 
   private constructor(
     private readonly engine: Engine,
@@ -77,6 +85,8 @@ export class Game {
     this.embers = quality === 'high' ? new EmberSystem(scene) : null
     const mountain = this.mountain
     this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
+    const hudRoot = document.querySelector<HTMLElement>('#hud')!
+    this.session = new DriftSession(this.mountain?.roads ?? null, new Hud(hudRoot), new RouteRuns(new SafeStorage('drift-folio')))
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
   }
@@ -114,7 +124,11 @@ export class Game {
   /** One fixed physics tick. */
   private physicsTick(h: number): void {
     this.car.update(this.controls, h)
-    this.world.step()
+    this.world.step(this.events)
+    // a hard chassis contact with a guard rail is a crash (spec §8)
+    this.events.drainContactForceEvents((e) => {
+      if (surfaceOf.get(e.collider1()) === 'rail' || surfaceOf.get(e.collider2()) === 'rail') this.railHit = true
+    })
     this.car.wheels().forEach((w, i) => this.skids.step(i, w.contact ? w.contactPoint : null, w.slide))
   }
 
@@ -130,7 +144,11 @@ export class Game {
     const pose = this.car.pose(alpha)
     this.visual.sync(this.car, pose)
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
-    if (!paused && this.mountain?.checkpoints.update(t, dt)) this.resetCar()
+    if (!paused) {
+      if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
+      this.session.update({ t, dt, now: performance.now() / 1000, railHit: this.railHit, inShortcutZone: false })
+      this.railHit = false
+    }
 
     this.camera.update(t, dt)
     const camPos = this.engine.camera.position
@@ -211,6 +229,8 @@ export class Game {
         const i = e?.hairpinApexes()[0]
         return e && i !== undefined ? i / (e.points.length - 1) : -1
       },
+      score: () => this.session.score.state(),
+      route: () => this.session.route,
     }
   }
 }
