@@ -12,7 +12,7 @@ describe('palette', () => {
   it('every token parses as hex', () => {
     for (const v of Object.values(palette)) expect(() => hexToRgb(v)).not.toThrow()
   })
-  it('HUD text reads on every sky band at 4.5:1', () => {
-    for (const bg of [palette.skyTop, palette.skyMid]) expect(contrast(palette.hudText, bg)).toBeGreaterThanOrEqual(4.5)
+  it('HUD text reads at 4.5:1 on every sky band, including the horizon', () => {
+    for (const bg of [palette.skyTop, palette.skyMid, palette.skyHorizon]) expect(contrast(palette.hudText, bg)).toBeGreaterThanOrEqual(4.5)
   })
 })

@@ -1,6 +1,6 @@
 import './styles/base.css'
 import * as THREE from 'three/webgpu'
-import { createEngine, detectGpu } from './core/engine'
+import { createEngine, detectGpu, type GpuNavigator } from './core/engine'
 import { palette } from './render/palette'
 import { openSkipOverlay } from './ui/skip'
 
@@ -8,14 +8,14 @@ async function boot() {
   const canvas = document.querySelector<HTMLCanvasElement>('#scene')!
   document.querySelector('#skip-link')!.addEventListener('click', () => openSkipOverlay('user'))
 
-  const tier = await detectGpu(navigator as never, canvas)
+  const tier = await detectGpu(navigator as unknown as GpuNavigator, canvas)
   document.documentElement.dataset.gpu = tier
   if (tier === 'none') return openSkipOverlay('no-gpu')
 
   const engine = await createEngine(canvas, tier)
   engine.onContextLost(() => openSkipOverlay('context-lost'))
   const { scene, camera, renderer } = engine
-  scene.background = new THREE.Color(palette.skyMid)
+  // Canvas is transparent until the M2 sky dome lands, so the CSS dusk gradient shows.
   camera.position.set(3, 2, 5)
   camera.lookAt(0, 0, 0)
 

@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu'
+import { createContextGuard } from './contextGuard'
 
 export type GpuTier = 'webgpu' | 'webgl2' | 'none'
 
-interface GpuNavigator {
+export interface GpuNavigator {
   gpu?: { requestAdapter: () => Promise<unknown | null> }
 }
 
@@ -31,6 +32,7 @@ export interface Engine {
   tier: GpuTier
   isMobile: boolean
   onFrame(cb: (dt: number, time: number) => void): void
+  /** Fires once when the GPU context is lost and has not come back within 3 s. */
   onContextLost(cb: () => void): void
   setPixelRatioCap(cap: number): void
   dispose(): void
@@ -43,7 +45,7 @@ export function isMobileDevice(): boolean {
 export async function createEngine(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>): Promise<Engine> {
   const isMobile = isMobileDevice()
   let dprCap = isMobile ? 1.5 : 2
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: !isMobile, forceWebGL: tier === 'webgl2' })
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: !isMobile, alpha: true, forceWebGL: tier === 'webgl2' })
   await renderer.init()
   renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap))
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -74,18 +76,24 @@ export async function createEngine(canvas: HTMLCanvasElement, tier: Exclude<GpuT
     last = now
     for (const cb of frameCbs) cb(dt, now / 1000)
   })
-  canvas.addEventListener('webglcontextlost', (e) => {
-    e.preventDefault()
-    lostCbs.forEach((cb) => cb())
-  })
-  const backend = (renderer as unknown as { backend?: { device?: { lost?: Promise<unknown> } } }).backend
-  backend?.device?.lost?.then(() => lostCbs.forEach((cb) => cb()))
+  // three calls onDeviceLost for WebGPU device loss (except intentional destroy)
+  // and for WebGL context loss. WebGL can come back; WebGPU loss is final.
+  const guard = createContextGuard(() => lostCbs.forEach((cb) => cb()))
+  renderer.onDeviceLost = () => guard.lost()
+  const onRestored = () => guard.restored()
+  canvas.addEventListener('webglcontextrestored', onRestored)
 
   return {
     renderer, scene, camera, tier, isMobile,
     onFrame: (cb) => void frameCbs.push(cb),
     onContextLost: (cb) => void lostCbs.push(cb),
     setPixelRatioCap: (cap) => { dprCap = cap; resize() },
-    dispose: () => { ro.disconnect(); renderer.setAnimationLoop(null); renderer.dispose() },
+    dispose: () => {
+      ro.disconnect()
+      canvas.removeEventListener('webglcontextrestored', onRestored)
+      renderer.onDeviceLost = () => {}
+      renderer.setAnimationLoop(null)
+      renderer.dispose()
+    },
   }
 }

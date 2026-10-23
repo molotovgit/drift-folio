@@ -124,6 +124,8 @@ it('returns none when neither is available', async () => {
 
 ### Task 0.3: CI deploy
 
+> **Deviation (2026-10-23):** the account token lacks the `workflow` scope, so there is no `ci.yml` or `deploy.yml` for now. Every PR runs `npm run verify` (build + vitest + playwright) locally before review, and `npm run deploy` publishes `dist` to the `gh-pages` branch. Vite uses `base: './'`, so runtime asset URLs must be relative (`models/fd.glb`, never `/models/...`). Switch to Actions once the scope is granted.
+
 **Files:** Create `.github/workflows/deploy.yml`, `.github/workflows/ci.yml`.
 
 - [ ] **Step 1:** `ci.yml` on pull_request: `npm ci`, `npx tsc --noEmit`, `npx vitest run`, `npx playwright install --with-deps chromium`, `npx playwright test`.

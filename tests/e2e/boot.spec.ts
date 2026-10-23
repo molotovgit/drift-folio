@@ -34,3 +34,18 @@ test('opens the overlay by itself when no GPU backend exists', async ({ page }) 
   await expect(page.locator('#skip-reason')).toContainText('cannot run')
   await expect(page.getByRole('button', { name: 'Back to the mountain' })).toBeHidden()
 })
+
+test('a lost WebGL context that does not restore within 3 s opens the overlay', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true }))
+  await page.goto('/')
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1')
+  expect(await page.evaluate(() => document.documentElement.dataset.gpu)).toBe('webgl2')
+  await page.evaluate(() => {
+    const gl = document.querySelector<HTMLCanvasElement>('#scene')!.getContext('webgl2')!
+    gl.getExtension('WEBGL_lose_context')!.loseContext()
+  })
+  await page.waitForTimeout(1500)
+  await expect(page.locator('#skip-overlay')).toHaveCount(0)
+  await expect(page.locator('#skip-overlay')).toBeVisible({ timeout: 4000 })
+  await expect(page.locator('#skip-reason')).toContainText('graphics driver reset')
+})

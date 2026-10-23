@@ -1,6 +1,6 @@
 :root {
   --sky-top: #2a1840; --sky-mid: #5b2a6e; --sky-horizon: #c2407a;
-  --text: #fff4e8; --text-soft: #d9c8e0; --accent: #ff5c8a; --gold: #ffc04d; --ink: #1a1420;
+  --text: #fffbf6; --text-soft: #d9c8e0; --accent: #ff5c8a; --gold: #ffc04d; --ink: #1a1420;
   --panel: rgba(26, 20, 32, 0.86); --panel-line: rgba(255, 244, 232, 0.14);
   --font-display: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', sans-serif;
   --font-body: 'Barlow', 'Segoe UI', system-ui, sans-serif;

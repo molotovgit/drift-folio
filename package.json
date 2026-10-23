@@ -9,7 +9,9 @@
     "preview": "vite preview --port 4173",
     "test": "vitest run",
     "e2e": "playwright test",
-    "deploy": "gh-pages -d dist -b gh-pages --nojekyll -m \"deploy: $(git rev-parse --short HEAD)\""
+    "verify": "npm run build && npm test && npm run e2e",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist -b gh-pages --nojekyll -m deploy"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",

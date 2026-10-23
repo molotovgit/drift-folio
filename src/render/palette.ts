@@ -20,7 +20,7 @@ export const palette = {
   headlight: '#dff6ff',
   torii: '#c8321f',
   fog: '#7a3a78',
-  hudText: '#fff4e8',
+  hudText: '#fffbf6',
   hudAccent: '#ff5c8a',
   hudGold: '#ffc04d',
 } as const

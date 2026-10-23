@@ -10,6 +10,7 @@ const reasonText: Record<SkipReason, string> = {
 }
 
 let root: HTMLElement | null = null
+let returnFocus: HTMLElement | null = null
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)
@@ -72,12 +73,25 @@ function build(): HTMLElement {
 
   inner.append(close, reason, h, handle, line, skills, grid, links)
   wrap.append(inner)
-  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !close.hidden) closeSkipOverlay() })
+  wrap.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !close.hidden) closeSkipOverlay()
+    if (e.key === 'Tab') trapFocus(wrap, e)
+  })
   document.body.append(wrap)
   return wrap
 }
 
+function trapFocus(container: HTMLElement, e: KeyboardEvent) {
+  const items = [...container.querySelectorAll<HTMLElement>('button:not([hidden]), a[href]')]
+  if (!items.length) return
+  const first = items[0]
+  const last = items[items.length - 1]
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+}
+
 export function openSkipOverlay(reason: SkipReason): void {
+  if (!isSkipOpen()) returnFocus = document.activeElement as HTMLElement | null
   root ??= build()
   const r = root.querySelector<HTMLElement>('#skip-reason')!
   r.textContent = reasonText[reason]
@@ -85,13 +99,18 @@ export function openSkipOverlay(reason: SkipReason): void {
   // When the game cannot run, there is nothing to go back to.
   root.querySelector<HTMLButtonElement>('.skip__close')!.hidden = reason !== 'user'
   root.hidden = false
-  root.querySelector<HTMLElement>('.skip__close:not([hidden]), .skip__title')?.focus()
+  const title = root.querySelector<HTMLElement>('.skip__title')!
+  title.tabIndex = -1
+  const closeBtn = root.querySelector<HTMLElement>('.skip__close:not([hidden])')
+  ;(closeBtn ?? title).focus()
   document.dispatchEvent(new CustomEvent('skip:open', { detail: reason }))
 }
 
 export function closeSkipOverlay(): void {
   if (!root) return
   root.hidden = true
+  returnFocus?.focus()
+  returnFocus = null
   document.dispatchEvent(new CustomEvent('skip:close'))
 }
 
