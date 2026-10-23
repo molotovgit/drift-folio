@@ -15,10 +15,13 @@ import { isSkipOpen, openSkipOverlay } from './ui/skip'
 import { createBoxCarVisual, loadCarVisual, type CarVisual } from './vehicle/carVisual'
 import { createDriftCar } from './vehicle/driftCar'
 import { buildGreybox } from './world/greybox'
+import { greyboxDressing, lampLight, placeModels } from './world/dressing'
 import { groundHeight } from './world/ground'
 
 const params = new URLSearchParams(location.search)
 const debug = params.has('debug')
+// test-only: let slow software renderers catch up more physics ticks per frame (same physics, just faster wall-clock)
+const maxFrame = debug && params.has('catchup') ? 10 / 60 : MAX_FRAME
 
 async function boot() {
   const canvas = document.querySelector<HTMLCanvasElement>('#scene')!
@@ -36,7 +39,7 @@ async function boot() {
   const sky = createSky()
   scene.add(sky.mesh)
   scene.fog = new THREE.Fog(palette.fog, 70, 420)
-  scene.add(new THREE.HemisphereLight(palette.skyHorizon, palette.terrainShadow, 1.6))
+  scene.add(new THREE.HemisphereLight(palette.skyHorizon, palette.terrainShadow, 2.0))
   // low sun behind the ridge: warm rim light from the back-left
   const sun = new THREE.DirectionalLight(palette.sunGlow, 2.4)
   sun.castShadow = true
@@ -59,6 +62,16 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
   world.timestep = PHYSICS_STEP
   const greybox = buildGreybox(scene, world)
+  const dressing = placeModels(scene, greyboxDressing())
+  // warm lamp lights at each lamp head (lamp arm reaches toward -X in model space)
+  dressing.then((g) => {
+    g.traverse((o) => {
+      if (o.name === 'light_anchor') {
+        const l = lampLight()
+        o.add(l)
+      }
+    })
+  })
   const car = createDriftCar(world, { x: 0, y: 0, z: 0 }, 0)
   let visual: CarVisual
   try {
@@ -79,7 +92,7 @@ async function boot() {
   const cam = createChaseCamera(camera)
 
   let controls = input.read(0)
-  const loop = createFixedLoop(PHYSICS_STEP, MAX_FRAME, (h) => {
+  const loop = createFixedLoop(PHYSICS_STEP, maxFrame, (h) => {
     car.update(controls, h)
     world.step()
     car.wheels().forEach((w, i) => skids.step(i, w.contact ? w.contactPoint : null, w.slide))
@@ -126,10 +139,12 @@ async function boot() {
       cameraY: () => camera.position.y - car.telemetry().pos.y,
       skidCount: () => skids.buffer.count,
       quality: () => post.tier,
+      speedFx: (s: number) => post.effectAt(s),
       carModel: () => visual.root.getObjectByName('body') !== undefined,
       renderInfo: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
     }
   }
+  await dressing
   document.documentElement.dataset.ready = '1'
 }
 

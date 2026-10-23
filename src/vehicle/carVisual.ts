@@ -80,7 +80,7 @@ export async function loadCarVisual(): Promise<CarVisual> {
   const wheels: THREE.Object3D[] = []
   const found: THREE.Object3D[] = []
   model.traverse((o) => {
-    if (/^wheel_/.test(o.name)) found.push(o)
+    if (/^wheel_(fl|fr|rl|rr)$/.test(o.name)) found.push(o)
   })
   if (found.length !== 4) throw new Error(`fd.glb: expected 4 wheel nodes, found ${found.length}`)
   model.updateMatrixWorld(true)

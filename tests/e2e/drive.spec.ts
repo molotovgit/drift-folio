@@ -24,7 +24,7 @@ test('the FD accelerates, drifts on handbrake and straightens when released', as
   test.setTimeout(120_000)
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
-  await page.goto('/?debug')
+  await page.goto('/?debug&catchup&quality=low')
   await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 30_000 })
   await page.locator('#scene').click()
 
@@ -41,6 +41,7 @@ test('the FD accelerates, drifts on handbrake and straightens when released', as
   await page.keyboard.down('Space')
   const drift = await waitFor(page, (t) => t.drifting, 30_000)
   expect(drift.drifting).toBe(true)
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __drift: { skidCount: () => number } }).__drift.skidCount()), { timeout: 20_000 }).toBeGreaterThan(0)
 
   // release everything: slip settles under 5°
   await page.keyboard.up('Space')
@@ -52,7 +53,7 @@ test('the FD accelerates, drifts on handbrake and straightens when released', as
 })
 
 test('C toggles the top-down camera and R resets the car', async ({ page }) => {
-  await page.goto('/?debug')
+  await page.goto('/?debug&catchup&quality=low')
   await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 30_000 })
   await page.locator('#scene').click()
   const camY = () => page.evaluate(() => (window as unknown as { __drift: { cameraY: () => number } }).__drift.cameraY())
@@ -65,7 +66,7 @@ test('C toggles the top-down camera and R resets the car', async ({ page }) => {
 })
 
 test('the game pauses while the skip overlay is open', async ({ page }) => {
-  await page.goto('/?debug')
+  await page.goto('/?debug&catchup&quality=low')
   await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 30_000 })
   await page.getByRole('button', { name: 'Skip the game' }).click()
   await page.keyboard.down('KeyW')

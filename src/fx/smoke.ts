@@ -71,7 +71,7 @@ export function createSmoke(scene: THREE.Scene, max = 260) {
     /** emission rate scales with intensity (0..1); call per frame */
     emit(at: Vec3, intensity: number, carVel: Vec3, dt: number) {
       if (intensity <= 0) return
-      budget += intensity * 70 * dt
+      budget += intensity * 38 * dt
       while (budget >= 1) {
         budget -= 1
         const p = puffs[cursor]
@@ -79,11 +79,11 @@ export function createSmoke(scene: THREE.Scene, max = 260) {
         p.alive = true
         p.age = 0
         p.life = 1.2 + Math.random() * 0.9
-        p.size = 0.8 + Math.random() * 0.6
+        p.size = 0.45 + Math.random() * 0.35
         p.spin = (Math.random() - 0.5) * 3
         p.rot = Math.random() * Math.PI * 2
         p.pos.set(at.x + (Math.random() - 0.5) * 0.4, at.y + 0.25, at.z + (Math.random() - 0.5) * 0.4)
-        p.vel.set(carVel.x * 0.15 + (Math.random() - 0.5) * 1.2, 0.8 + Math.random() * 0.8, carVel.z * 0.15 + (Math.random() - 0.5) * 1.2)
+        p.vel.set(carVel.x * 0.35 + (Math.random() - 0.5) * 1.6, 0.6 + Math.random() * 0.7, carVel.z * 0.35 + (Math.random() - 0.5) * 1.6)
       }
     },
     update(dt: number) {
@@ -106,11 +106,11 @@ export function createSmoke(scene: THREE.Scene, max = 260) {
         p.rot += p.spin * dt
         s.visible = true
         s.position.copy(p.pos)
-        const size = p.size * (1 + k * 3.2)
+        const size = p.size * (1 + k * 2.4)
         s.scale.set(size, size, 1)
         const m = s.material as THREE.SpriteNodeMaterial
         m.rotation = p.rot
-        m.opacity = (1 - k) * (k < 0.1 ? k / 0.1 : 1) * 0.8
+        m.opacity = (1 - k) * (k < 0.1 ? k / 0.1 : 1) * 0.55
       }
     },
   }

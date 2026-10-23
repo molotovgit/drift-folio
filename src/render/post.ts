@@ -16,6 +16,8 @@ export interface Post {
   render(speed: number): void
   setTier(t: QualityTier): void
   setReducedMotion(on: boolean): void
+  /** the speed-effect strength that would be used at this speed (0 when reduced motion is on) */
+  effectAt(speed: number): number
   readonly tier: QualityTier
 }
 
@@ -88,6 +90,9 @@ export function createPost(renderer: THREE.WebGPURenderer, scene: THREE.Scene, c
     },
     setReducedMotion(on: boolean) {
       reducedMotion = on
+    },
+    effectAt(speed: number) {
+      return reducedMotion ? 0 : speedFx(speed)
     },
   }
 }
