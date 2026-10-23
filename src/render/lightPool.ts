@@ -8,7 +8,6 @@ const scratchDists: number[] = []
  * Indices of the n anchors closest to (x, z), nearest first. `anchors` is a flat
  * [x0, z0, x1, z1, …] array. Writes into `out` (reused) to avoid per-frame allocation.
  */
-
 export function nearestAnchors(anchors: ArrayLike<number>, x: number, z: number, n: number, out: number[] = []): number[] {
   out.length = 0
   const dists = scratchDists
