@@ -1,4 +1,5 @@
 import { clamp, lerp } from '../core/math'
+import { BIOMES, type BiomeMap } from './biomes'
 import { LotSurface } from './lotSurface'
 import type { RoadHit, RoadNetwork } from './roadNetwork'
 import type { Channel } from './shortcutLayout'
@@ -71,6 +72,9 @@ export const ROAD_LIFT = 0.12
 /** terrain is carved flat this far from the road centreline, then blends out */
 const CARVE_FLAT = 10
 const CARVE_BLEND = 28
+/** share of the hills taken out per region: Neon Ward's blocks are near flat, Lantern Valley's floor gentle (paddies) */
+const CITY_FLATTEN = 0.9
+const TEMPLE_FLATTEN = 0.5
 /** channel banks blend into the hillside over this distance */
 const CHANNEL_BLEND = 16
 /** coarse road samples used for the smooth "valley" height field */
@@ -97,6 +101,8 @@ export class TerrainHeights {
     lots: readonly FlatLot[] = [],
     /** dirt shortcuts and the railway bed, carved to their height profile */
     channels: readonly Channel[] = [],
+    /** biome map: the regions tone the hills down (see CITY_FLATTEN) */
+    private readonly biomes: BiomeMap = BIOMES,
   ) {
     this.lots = lots.map((l) => LotSurface.of(l, roads))
     this.channels = channels.map((c) => ({ c, box: ChannelBox.of(c) }))
@@ -140,7 +146,8 @@ export class TerrainHeights {
     const away = hit ? smooth(CARVE_FLAT + 4, 90, hit.dist) : 1
     const swell = (this.noise.fbm(x / 260, z / 260, 3) - 0.35) * 70
     const ridges = (this.noise.fbm(x / 70, z / 70, 4) - 0.5) * 22
-    const natural = base + (swell + ridges) * away
+    const w = this.biomes.biomeAt(x, z)
+    const natural = base + (swell + ridges) * away * (1 - CITY_FLATTEN * w.city - TEMPLE_FLATTEN * w.temple)
     const withLots = this.carveChannels(x, z, this.flattenLots(x, z, natural))
     if (!hit) return Math.min(withLots, this.floorAt(x, z) - ROAD_LIFT)
     // carve: just under the nearest road's (possibly banked) surface, blending out to the natural slope

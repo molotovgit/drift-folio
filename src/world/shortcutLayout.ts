@@ -1,4 +1,5 @@
 import type { Vec3 } from '../core/math'
+import { valleyPond, valleyRiver } from './riverLayout'
 import type { RoadNetwork } from './roadNetwork'
 import { catmullRom2D } from './spline'
 
@@ -140,8 +141,9 @@ export function railBed(roads: RoadNetwork): Channel {
   return { id: 'S5', dirt: false, width: 7, points: densify(pts, 4) }
 }
 
+/** Every carved channel: the shortcuts, the railway bed and Lantern Valley's river and pond. */
 export function allChannels(roads: RoadNetwork): Channel[] {
-  return [riverbed(roads), brokenRailChute(roads), restStopCut(roads), peakTrail(roads), railBed(roads)]
+  return [riverbed(roads), brokenRailChute(roads), restStopCut(roads), peakTrail(roads), railBed(roads), valleyRiver(), valleyPond()]
 }
 
 /** Point-to-polyline distance and the fraction along it (0..1) of the closest point. */

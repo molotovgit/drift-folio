@@ -1,4 +1,5 @@
 import type { Vec3 } from '../core/math'
+import { BIOMES, positionRoll } from './biomes'
 import { mulberry32, type Placement } from './dressing'
 import { leftOf } from './roadMesh'
 import type { RoadEdge, RoadNetwork } from './roadNetwork'
@@ -9,7 +10,7 @@ import type { TerrainHeights } from './terrain'
 /** Lamps stand this far from the centreline on the outside of a hairpin. */
 const LAMP_OFFSET = 6.5
 /** extra lamps every N metres on these routes so the dusk roads read at night */
-const LAMP_EVERY: Partial<Record<RoadEdge['route'], number>> = { summit: 60, platform: 140, systems: 120, town: 50 }
+const LAMP_EVERY: Partial<Record<RoadEdge['route'], number>> = { summit: 60, platform: 140, systems: 120, town: 50, city: 26 }
 
 export interface LampSpot {
   pos: Vec3
@@ -78,13 +79,18 @@ export function treeSpots(roads: RoadNetwork, terrain: TerrainHeights, keepOut: 
       const hit = roads.index.nearest(x, z, 70)
       const d = hit ? hit.dist : 999
       if (d < TREE_CLEARANCE) continue
-      if (keepOut.some((k) => Math.hypot(k.x - x, k.z - z) < k.r)) continue
       // dense near roads, thinner far away
       const density = d < 30 ? 0.55 : d < 70 ? 0.35 : 0.12
       if (roll > density) continue
-      const maple = d < 45 ? rnd() < 0.75 : rnd() < 0.25
+      if (keepOut.some((k) => Math.hypot(k.x - x, k.z - z) < k.r)) continue
+      // Lantern Valley is a maple valley
+      const maple = (d < 45 ? rnd() < 0.75 : rnd() < 0.25) || BIOMES.weight('temple', x, z) > 0.5
       const model = maple ? `tree_maple_${Math.floor(rnd() * 4)}` : `tree_pine_${Math.floor(rnd() * 3)}`
-      out.push({ model, x, y: terrain.heightAt(x, z) - 0.2, z, yaw: rnd() * Math.PI * 2, scale: 0.8 + rnd() * 0.5 })
+      const yaw = rnd() * Math.PI * 2
+      const scale = 0.8 + rnd() * 0.5
+      // no forest in Neon Ward (a position roll after every draw, so the mountain's trees never reshuffle)
+      if (positionRoll(x, z, 91) < BIOMES.weight('city', x, z)) continue
+      out.push({ model, x, y: terrain.heightAt(x, z) - 0.2, z, yaw, scale })
     }
   }
   return out
@@ -116,6 +122,11 @@ export function landmarks(roads: RoadNetwork, terrain: TerrainHeights): Placemen
     { ...at('town-ps', 25, -1, 14), model: 'house_0' },
     { ...at('town-ps', 55, -1, 14), model: 'house_1' },
     { ...at('town-aw', 25, -1, 13), model: 'house_0' },
+    // route signs where the regions branch off (labels: signposts.ts)
+    { ...at('summit', 9, -1, 7.5), model: 'signpost' },
+    { ...at('town-aw', roads.edge('town-aw').points.length - 11, -1, 7.5), model: 'signpost' },
+    { ...at('valley-descent', roads.edge('valley-descent').points.length - 9, 1, 7.5), model: 'signpost' },
+    { ...at('city-ramp', roads.edge('city-ramp').points.length - 9, 1, 7.5), model: 'signpost' },
   ]
   return items
 }

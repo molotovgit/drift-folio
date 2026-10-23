@@ -1,8 +1,10 @@
 import type { QualityTier } from '../render/post'
+import { BIOMES, positionRoll } from './biomes'
 import { fenceSpots } from './breakables'
 import { cornerSpots } from './cornerLayout'
 import { mulberry32 } from './dressing'
 import { lampSpots, landmarks, treeKeepOut, type TreeSpot } from './mountainLayout'
+import { RegionLayouts } from './regionLayouts'
 import { leftOf } from './roadMesh'
 import type { RoadEdge, RoadNetwork } from './roadNetwork'
 import { allChannels, channelDistance, PEAK, type Channel } from './shortcutLayout'
@@ -45,6 +47,23 @@ export const ROADSIDE_KINDS: Readonly<Record<RoadsideKind, KindRule>> = {
   rock: { band: [7.5, 24], per10m: 0.45, scale: [0.25, 0.8], tier: { high: 1, mid: 1, low: 0.7 } },
   bamboo: { band: [11, 22], per10m: 0.5, patch: { scale: 120, threshold: 0.6 }, cluster: { count: 5, spread: 4 }, scale: [0.8, 1.2], tier: { high: 1, mid: 1, low: 0.7 } },
   jizo: { band: [6.6, 7.2], per10m: 0.035, scale: [0.95, 1.1], tier: { high: 1, mid: 1, low: 1 } },
+}
+
+/**
+ * Share of each kind kept per biome (the mountain keeps all). The valley trades
+ * susuki and rocks for ferns and bamboo-edge greenery (its groves and paddies
+ * are TempleLayout props); the ward keeps a few weeds and planter shrubs, its
+ * verges are pavements.
+ */
+export const BIOME_DENSITY: Readonly<Record<RoadsideKind, { temple: number; city: number }>> = {
+  grass: { temple: 0.8, city: 0.12 },
+  flowers: { temple: 0.5, city: 0 },
+  pampas: { temple: 0.35, city: 0 },
+  fern: { temple: 1, city: 0 },
+  bush: { temple: 0.8, city: 0.15 },
+  rock: { temple: 0.6, city: 0 },
+  bamboo: { temple: 1, city: 0 },
+  jizo: { temple: 1, city: 0 },
 }
 
 /** Nothing stands closer than this to ANY road centreline (half width 4 m + rail + post). */
@@ -187,7 +206,20 @@ export class RoadsideLayout {
     for (const f of fenceSpots(roads)) zones.push({ x: f.pos.x, z: f.pos.z, r: 2.4 })
     for (const c of cornerSpots(roads)) zones.push({ x: c.board.x, z: c.board.z, r: 4 })
     for (const l of landmarks(roads, terrain)) zones.push({ x: l.x, z: l.z, r: LANDMARK_CLEARANCE[l.model] ?? DEFAULT_LANDMARK_CLEARANCE })
+    // the regions' own props: temple buildings, paddies, river, city blocks
+    zones.push(...RegionLayouts.of(roads, terrain).keepOuts)
     return zones
+  }
+
+  /**
+   * Does the biome at (x, z) keep a `kind` plant? Rolled from the position, not
+   * the seeded stream, so the mountain (weight 1, always kept) never reshuffles.
+   */
+  static biomeKeeps(kind: RoadsideKind, x: number, z: number): boolean {
+    const w = BIOMES.biomeAt(x, z)
+    if (w.mountain >= 1) return true
+    const f = BIOME_DENSITY[kind]
+    return positionRoll(x, z, 31 + Math.round(PATCH_OFFSET[kind])) < w.mountain + w.temple * f.temple + w.city * f.city
   }
 
   private scatter(): RoadsideItem[] {
@@ -228,7 +260,7 @@ export class RoadsideLayout {
             const scale = rule.scale[0] + rnd() * (rule.scale[1] - rule.scale[0])
             const tint = rnd()
             const keep = rnd()
-            if (this.allowed(x, z, clearance, rule.town)) out.push({ kind, x, z, y: this.terrain.heightAt(x, z) - 0.04, yaw, scale, tint, keep })
+            if (this.allowed(x, z, clearance, rule.town) && RoadsideLayout.biomeKeeps(kind, x, z)) out.push({ kind, x, z, y: this.terrain.heightAt(x, z) - 0.04, yaw, scale, tint, keep })
           }
         }
       }
@@ -263,7 +295,8 @@ export class RoadsideLayout {
             const z = cz + Math.sin(a) * r
             const model = pines ? `tree_pine_${Math.floor(rnd() * 3)}` : `tree_maple_${Math.floor(rnd() * 4)}`
             const tree = { model, x, z, y: this.terrain.heightAt(x, z) - 0.2, yaw: rnd() * Math.PI * 2, scale: 0.75 + rnd() * 0.45 }
-            if (this.allowed(x, z, CLUSTER_CLEARANCE)) out.push(tree)
+            // no woods in the ward (a position roll, so the mountain's clusters never reshuffle)
+            if (this.allowed(x, z, CLUSTER_CLEARANCE) && positionRoll(x, z, 77) >= BIOMES.weight('city', x, z)) out.push(tree)
           }
         }
       }

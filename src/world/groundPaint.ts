@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu'
 import { clamp } from '../core/math'
 import { palette } from '../render/palette'
+import { BIOMES, type BiomeMap } from './biomes'
 import type { RoadNetwork } from './roadNetwork'
 import { ValueNoise } from './terrain'
 
@@ -26,10 +27,24 @@ const DIRT_TO = 8.5
 const NO_CANOPIES: readonly Canopy[] = []
 
 /**
+ * Ground colours of the two regions (dusk-dimmed, like the mountain's): the
+ * valley's moss and rice-field green, the ward's dark paving with lighter
+ * pavements along the streets.
+ */
+export const BIOME_GROUND = {
+  templeGround: '#3e4a3a',
+  templeMoss: '#5a6a3a',
+  cityGround: '#2f2b3a',
+  cityPavement: '#5c5670',
+} as const
+
+/**
  * Colours the terrain per vertex so the ground between props is never a flat
  * plain: the maroon autumn ground with patches of dry grass and orange leaf
  * litter, packed dirt along the road shoulders, violet shade under tree
- * canopies and darker steep slopes. Pure function of position (deterministic).
+ * canopies and darker steep slopes. Lantern Valley turns it mossy green and
+ * Neon Ward paves it, blended by the biome weights. Pure function of position
+ * (deterministic).
  */
 export class GroundPaint {
   private readonly litterNoise = new ValueNoise(21)
@@ -40,11 +55,18 @@ export class GroundPaint {
   private readonly grass = new THREE.Color(palette.groundGrass)
   private readonly dirt = new THREE.Color(palette.groundDirt)
   private readonly shade = new THREE.Color(palette.groundShade)
+  private readonly templeGround = new THREE.Color(BIOME_GROUND.templeGround)
+  private readonly templeMoss = new THREE.Color(BIOME_GROUND.templeMoss)
+  private readonly cityGround = new THREE.Color(BIOME_GROUND.cityGround)
+  private readonly cityPavement = new THREE.Color(BIOME_GROUND.cityPavement)
+  /** scratch: the shoulder colour at the vertex being painted */
+  private readonly shoulder = new THREE.Color()
   private readonly canopy = new Map<number, Canopy[]>()
 
   constructor(
     private readonly roads: RoadNetwork | null = null,
     canopies: readonly Canopy[] = [],
+    private readonly biomes: BiomeMap = BIOMES,
   ) {
     for (const c of canopies) {
       const k = this.key(Math.floor(c.x / CANOPY_CELL), Math.floor(c.z / CANOPY_CELL))
@@ -61,9 +83,15 @@ export class GroundPaint {
     out.lerp(this.grass, 0.75 * smooth(0.4, 0.62, this.grassNoise.fbm(x / 55, z / 55, 3)))
     const litter = Math.max(0, this.litterNoise.fbm(x / 30, z / 30, 3) - 0.56) * 2.4
     out.lerp(this.leaves, Math.min(0.75, litter))
+    const { temple, city } = this.biomes.biomeAt(x, z)
+    // the valley: mossy ground with brighter green patches where the mountain has dry grass
+    if (temple > 0) out.lerp(this.templeGround, 0.8 * temple).lerp(this.templeMoss, 0.6 * temple * smooth(0.45, 0.65, this.grassNoise.fbm(x / 40, z / 40, 3)))
+    // the ward: dark paving everywhere
+    if (city > 0) out.lerp(this.cityGround, 0.9 * city)
     if (this.roads) {
       const hit = this.roads.index.nearest(x, z, DIRT_TO)
-      if (hit) out.lerp(this.dirt, 0.85 * (1 - smooth(DIRT_FROM, DIRT_TO, hit.dist)))
+      // dirt shoulders on the mountain and in the valley, pavements in the ward
+      if (hit) out.lerp(this.shoulder.copy(this.dirt).lerp(this.cityPavement, city), 0.85 * (1 - smooth(DIRT_FROM, DIRT_TO, hit.dist)))
     }
     out.lerp(this.shade, 0.6 * this.shadeAt(x, z))
     return out.lerp(this.slopeShadow, Math.min(0.8, slope * 0.9))

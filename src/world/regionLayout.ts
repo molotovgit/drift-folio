@@ -48,6 +48,12 @@ export const REGION_EDGE_DEFS: readonly EdgeDef[] = [
   E('city-ramp', 'townW', 'cityGate', 'city', [[222, 935], [250, 990]]),
   // the avenue: east along the front block, hairpin round the far corner, back west
   E('city-avenue', 'cityGate', 'cityBack', 'city', [[350, 1040], [430, 1035], [500, 1050], [560, 1075], [592, 1100], [588, 1132], [556, 1148], [470, 1170], [400, 1182]]),
-  // the alley back to the gate
-  E('city-alley', 'cityBack', 'cityGate', 'city', [[300, 1150], [285, 1090]]),
+  // the alley back to the gate, kinked round a corner block
+  E('city-alley', 'cityBack', 'cityGate', 'city', [[285, 1165], [262, 1120], [286, 1080]]),
 ]
+
+/** Banner names shown when the car enters each region's roads (the mountain routes' names live in content/projects). */
+export const REGION_NAMES: Readonly<Partial<Record<EdgeDef['route'], string>>> = {
+  temple: 'Lantern Valley',
+  city: 'Neon Ward',
+}
