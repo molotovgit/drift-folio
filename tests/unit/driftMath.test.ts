@@ -37,36 +37,56 @@ describe('lateralGrip', () => {
 
 describe('DriftCommand (drift axis, + = right)', () => {
   const c = (drift: number, steer = 0, handbrake = false) => ({ drift, steer, handbrake })
+  const V = 20 // m/s, rolling
   it('passes the drift axis through, ignoring stick noise', () => {
     const d = new DriftCommand()
-    expect(d.resolve(c(0.7), 0)).toBe(0.7)
-    expect(d.resolve(c(-1, 1, true), 0)).toBe(-1) // the drift axis beats the handbrake
-    expect(d.resolve(c(0.03), 0)).toBe(0)
+    expect(d.resolve(c(0.7), 0, V)).toBe(0.7)
+    expect(d.resolve(c(-1, 1, true), 0, V)).toBe(-1) // the drift axis beats the handbrake
+    expect(d.resolve(c(0.03), 0, V)).toBe(0)
   })
-  it('handbrake drifts fully toward the steer direction, or keeps an existing slide', () => {
-    expect(new DriftCommand().resolve(c(0, 0.4, true), 0)).toBe(1)
-    expect(new DriftCommand().resolve(c(0, -0.2, true), 0)).toBe(-1)
-    expect(new DriftCommand().resolve(c(0, 0.5, true), -30)).toBe(-1) // the slide's side beats the steer
-    expect(new DriftCommand().resolve(c(0, 0, true), 3)).toBe(0) // straight line: nothing
-    expect(new DriftCommand().resolve(c(0, 0.5, false), 30)).toBe(0)
+  it('a fresh handbrake press goes toward the steer; with the steer neutral it keeps the slide', () => {
+    expect(new DriftCommand().resolve(c(0, 0.4, true), 0, V)).toBe(1)
+    expect(new DriftCommand().resolve(c(0, -0.2, true), 0, V)).toBe(-1)
+    expect(new DriftCommand().resolve(c(0, 0.5, true), -30, V)).toBe(1) // steer beats the old slide
+    expect(new DriftCommand().resolve(c(0, 0.05, true), -30, V)).toBe(-1) // neutral steer: the slide's side
+    expect(new DriftCommand().resolve(c(0, 0, true), 3, V)).toBe(0) // straight line: nothing
+    expect(new DriftCommand().resolve(c(0, 0.5, false), 30, V)).toBe(0)
   })
-  it('latches the handbrake direction until release: counter-steer does not flip the drift', () => {
+  it('latches until release: counter-steer does not flip the drift', () => {
     const d = new DriftCommand()
-    expect(d.resolve(c(0, 1, true), 0)).toBe(1)
-    expect(d.resolve(c(0, -1, true), 40)).toBe(1) // counter-steer mid-drift
-    expect(d.resolve(c(0, -1, true), -10)).toBe(1)
-    expect(d.resolve(c(0, -1, false), 30)).toBe(0) // release clears it
-    expect(d.resolve(c(0, -1, true), 2)).toBe(-1) // a fresh press picks again
+    expect(d.resolve(c(0, 1, true), 0, V)).toBe(1)
+    expect(d.resolve(c(0, -1, true), 40, V)).toBe(1) // counter-steer mid-drift
+    expect(d.resolve(c(0, -1, true), -10, V)).toBe(1)
   })
-  it('a press with no direction yet picks one as soon as there is one', () => {
+  it('a quick release and re-press with opposite steer flicks the other way (S-bend)', () => {
     const d = new DriftCommand()
-    expect(d.resolve(c(0, 0, true), 0)).toBe(0)
-    expect(d.resolve(c(0, -0.5, true), 0)).toBe(-1)
-    expect(d.resolve(c(0, 1, true), 0)).toBe(-1)
+    d.resolve(c(0, 1, true), 0, V)
+    expect(d.resolve(c(0, 1, true), 43, V)).toBe(1)
+    expect(d.resolve(c(0, -1, false), 43, V)).toBe(0) // one tick released, still sliding right
+    expect(d.resolve(c(0, -1, true), 40, V)).toBe(-1)
   })
-  it('handbrakeDirection: slide side first, then steer', () => {
-    expect(handbrakeDirection(-1, 10)).toBe(1)
-    expect(handbrakeDirection(-1, 2)).toBe(-1)
+  it('the drift axis used with the handbrake held moves the latch', () => {
+    // drifting with J/L, press Space, release J/L: the side the axis chose stays
+    const d = new DriftCommand()
+    d.resolve(c(-1), -30, V)
+    expect(d.resolve(c(-1, 1, true), -30, V)).toBe(-1)
+    expect(d.resolve(c(0, 1, true), -30, V)).toBe(-1)
+    // Space latched right, overridden with J (left), J released: no snap back right
+    const e = new DriftCommand()
+    expect(e.resolve(c(0, 1, true), 0, V)).toBe(1)
+    expect(e.resolve(c(-0.6, 1, true), 30, V)).toBe(-0.6)
+    expect(e.resolve(c(0, 1, true), -20, V)).toBe(-1)
+  })
+  it('does not latch until rolling, then picks the first direction there is', () => {
+    const d = new DriftCommand()
+    expect(d.resolve(c(0, 1, true), 0, 1)).toBe(0) // standing: nothing latched
+    expect(d.resolve(c(0, 0, true), 0, V)).toBe(0)
+    expect(d.resolve(c(0, -0.5, true), 0, V)).toBe(-1)
+    expect(d.resolve(c(0, 1, true), 0, V)).toBe(-1)
+  })
+  it('handbrakeDirection: steer first, then the slide', () => {
+    expect(handbrakeDirection(-1, 10)).toBe(-1)
+    expect(handbrakeDirection(0.1, 10)).toBe(1)
     expect(handbrakeDirection(0.1, 2)).toBe(0)
   })
 })

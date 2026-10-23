@@ -88,6 +88,17 @@ describe('FD drift handling (headless physics)', () => {
     expect(minSlip).toBeGreaterThan(20) // still a right-hand drift throughout
   })
 
+  it('a quick Space re-press with opposite steer flicks the drift to the other side (S-bend)', () => {
+    const { car, run } = rig()
+    run(0.5, {})
+    run(4, { throttle: 1 })
+    run(0.8, { throttle: 1, steer: 1, handbrake: true })
+    expect(car.telemetry().slipDeg).toBeGreaterThan(20)
+    run(2 / 60, { throttle: 1, steer: -1 }) // ~34 ms off the button while still sliding right
+    run(0.8, { throttle: 1, steer: -1, handbrake: true })
+    expect(car.telemetry().slipDeg).toBeLessThan(-20)
+  })
+
   it('handbrake at a standstill does not reverse the car', () => {
     const { car, run } = rig()
     run(0.5, {})

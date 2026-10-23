@@ -77,6 +77,7 @@ export class DriftCar {
         .setCcdEnabled(true),
     )
     // chassis box (reports hard contacts for the crash rule) + rounded roof so rollovers don't snag
+    // the chassis is the only car collider that emits contact-force events
     this.chassis = world.createCollider(
       RAPIER.ColliderDesc.cuboid(0.86, 0.27, 2.1)
         .setTranslation(0, 0.22, 0)
@@ -157,7 +158,7 @@ export class DriftCar {
     const lv = this.body.linvel()
     const fwd = rotate(rot, FORWARD)
     const forwardSpeed = dot(lv, fwd)
-    const drift = this.driftCommand.resolve(c, t0.slipDeg)
+    const drift = this.driftCommand.resolve(c, t0.slipDeg, t0.speed)
     // the handbrake with no direction to drift in just slows the car; only while
     // rolling forward, since the brake pedal at a standstill means reverse
     const slowing = c.handbrake && drift === 0 && forwardSpeed > 0.8

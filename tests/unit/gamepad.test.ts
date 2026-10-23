@@ -68,15 +68,42 @@ describe('GamepadSource (twin stick)', () => {
   })
 
   it('prefers a standard-mapped pad, else falls back to the first connected one', () => {
-    const odd = { ...pad({ 0: -1, 2: 1 }), index: 0, mapping: '' } as Gamepad
+    const odd = (axes: Partial<Record<number, number>>) => ({ ...pad(axes), index: 0, mapping: '' }) as Gamepad
     const std = { ...pad({ 0: 1 }), index: 1 } as Gamepad
-    expect(new GamepadSource(() => [odd, std]).read()!.steer).toBe(1)
-    const fallback = new GamepadSource(() => [null, odd]).read()!
+    expect(new GamepadSource(() => [odd({ 0: -1 }), std]).read()!.steer).toBe(1)
+    let cur = odd({})
+    const src = new GamepadSource(() => [null, cur])
+    src.read() // sticks seen centred
+    cur = odd({ 0: -1, 2: 1 })
+    const fallback = src.read()!
     expect(fallback.steer).toBe(-1)
     expect(fallback.drift).toBe(1)
     // two-axis pads have no right stick to trust
-    const twoAxis = { ...pad({ 0: 1 }), axes: [1, 0.9], mapping: '' } as unknown as Gamepad
+    const twoAxis = { ...pad({ 0: 0 }), axes: [0, 0.9], mapping: '' } as unknown as Gamepad
     expect(new GamepadSource(() => [twoAxis]).read()!.drift).toBe(0)
+  })
+
+  it('a non-standard input resting at full scale is ignored until seen at rest (wheel pedal on axis 2)', () => {
+    let cur = { ...pad({ 0: 0, 2: 1 }, { 7: 1, 0: 1 }), mapping: '' } as Gamepad
+    const src = new GamepadSource(() => [cur])
+    for (let i = 0; i < 3; i++) {
+      const s = src.read()!
+      expect(s.drift).toBe(0)
+      expect(s.throttle).toBe(0)
+      expect(s.handbrake).toBe(false)
+    }
+    // it does not beat the keyboard in the InputController merge either
+    vi.stubGlobal('navigator', { getGamepads: () => [cur] })
+    expect(new InputController(new EventTarget()).read(0.016).drift).toBe(0)
+    vi.unstubAllGlobals()
+    // once the pedal is seen released it is a normal input
+    cur = { ...pad({ 0: 0, 2: 0 }), mapping: '' } as Gamepad
+    src.read()
+    cur = { ...pad({ 0: 0, 2: 1 }), mapping: '' } as Gamepad
+    expect(src.read()!.drift).toBe(1)
+    // a different pad must prove its inputs rest again
+    cur = { ...pad({ 0: 0, 2: 1 }), index: 2, id: 'wheel', mapping: '' } as Gamepad
+    expect(src.read()!.drift).toBe(0)
   })
 
   it('switching pads forgets the old pad buttons (a held button on the new pad fires once)', () => {

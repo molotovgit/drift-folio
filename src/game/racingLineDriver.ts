@@ -215,9 +215,10 @@ export class RacingLineDriver {
 
   /**
    * One short drift-axis flick per hairpin, just before its entry. Its
-   * direction is picked once, when it starts, like the handbrake-drift button:
-   * from the steering, since the pure-pursuit steer knows which way the car
-   * must turn right now (on an S-bend entry not always the hairpin's own way).
+   * direction is picked once, when it starts, like a fresh handbrake-drift
+   * press (handbrakeDirection): from the steering, since the pure-pursuit
+   * steer knows which way the car must turn right now (on an S-bend entry not
+   * always the hairpin's own way); from the slide only if the steer is neutral.
    */
   private driftFlicks(t: Telemetry, c: ControlState, dt: number): void {
     if (this.tapT > 0) {

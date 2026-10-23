@@ -8,8 +8,10 @@ const SLIP_MIN_SPEED = 0.5
 export const DRIFT_INPUT_DEADBAND = 0.05
 /** |steer| needed for the handbrake-drift to pick a drift direction. */
 const HANDBRAKE_STEER_MIN = 0.15
-/** a slide at least this big decides the handbrake-drift direction on its own, degrees */
+/** with the steer neutral, a slide at least this big decides the handbrake-drift direction, degrees */
 const HANDBRAKE_SLIDE_DEG = 4
+/** below this speed a handbrake press does not pick a drift direction yet, m/s */
+const HANDBRAKE_LATCH_SPEED = 2
 
 /** Body slip angle β in degrees: heading → velocity, CCW (left) positive. 0 when nearly stopped. */
 export function slipAngleDeg(heading: Vec2, velocity: Vec2): number {
@@ -33,13 +35,14 @@ export function lateralGrip(slipRad: number, peakRad: number, slideFactor: numbe
 }
 
 /**
- * Which way a handbrake-drift goes (+1 right, -1 left, 0 none yet): an
- * existing slide keeps its side (slip > 0 is a right-hand slide: nose right
- * of the path), otherwise toward the steer.
+ * Which way a fresh handbrake-drift goes (+1 right, -1 left, 0 none yet):
+ * toward the steer, so a quick re-press with opposite lock flicks the car
+ * the other way (S-bends); with the steer neutral an existing slide keeps
+ * its side (slip > 0 is a right-hand slide: nose right of the path).
  */
 export function handbrakeDirection(steer: number, slipDeg: number): number {
-  if (Math.abs(slipDeg) >= HANDBRAKE_SLIDE_DEG) return Math.sign(slipDeg)
   if (Math.abs(steer) >= HANDBRAKE_STEER_MIN) return Math.sign(steer)
+  if (Math.abs(slipDeg) >= HANDBRAKE_SLIDE_DEG) return Math.sign(slipDeg)
   return 0
 }
 
@@ -47,18 +50,23 @@ export function handbrakeDirection(steer: number, slipDeg: number): number {
  * Resolves the drift axis the car acts on (-1..1, +1 = drift right). The
  * drift input wins; otherwise the handbrake-drift (Space / pad A / touch
  * DRIFT) drifts fully one way. Its direction is latched when it is first
- * known after the press and kept until release, so counter-steering during a
- * handbrake drift adjusts the line instead of flipping the car across.
- * Handbrake alone in a straight line gives 0 (the car just slows).
+ * known after the press (once rolling) and kept until release, so
+ * counter-steering during a handbrake drift adjusts the line instead of
+ * flipping the car across. While the drift axis is used with the handbrake
+ * held, the latch follows the axis, so letting go of the axis keeps the side
+ * it last chose. Handbrake alone in a straight line gives 0 (the car slows).
  */
 export class DriftCommand {
   private latched = 0
 
-  resolve(c: { drift: number; steer: number; handbrake: boolean }, slipDeg: number): number {
+  resolve(c: { drift: number; steer: number; handbrake: boolean }, slipDeg: number, speed: number): number {
     if (!c.handbrake) this.latched = 0
-    if (Math.abs(c.drift) > DRIFT_INPUT_DEADBAND) return clamp(c.drift, -1, 1)
+    if (Math.abs(c.drift) > DRIFT_INPUT_DEADBAND) {
+      if (c.handbrake) this.latched = Math.sign(c.drift)
+      return clamp(c.drift, -1, 1)
+    }
     if (!c.handbrake) return 0
-    if (this.latched === 0) this.latched = handbrakeDirection(c.steer, slipDeg)
+    if (this.latched === 0 && speed > HANDBRAKE_LATCH_SPEED) this.latched = handbrakeDirection(c.steer, slipDeg)
     return this.latched
   }
 
