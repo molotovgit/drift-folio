@@ -151,37 +151,51 @@ describe('instanced props: thinning', () => {
 })
 
 describe('cull scheduler', () => {
-  it('re-culls at most N sets per frame, round-robin, none deferred past the limit', () => {
-    const sets = Array.from({ length: 10 }, (_, i) => InstancedProps.fromTemplate(template(), [placeMatrix(i * 3, 0, 30)]))
+  const makeSets = (n: number) => Array.from({ length: n }, (_, i) => InstancedProps.fromTemplate(template(), [placeMatrix(i * 3, 0, 30)]))
+  /** How many sets re-culled in the scheduler's last frame. */
+  const servedLastFrame = (spies: ReturnType<typeof vi.spyOn>[]) => spies.filter((s) => s.mock.results.at(-1)?.value === true).length
+
+  it('serves never-culled sets at once, then at most the budget per frame', () => {
+    const sets = makeSets(10)
+    const scheduler = new CullScheduler(3, 100)
     const spies = sets.map((s) => vi.spyOn(s, 'update'))
-    const scheduler = new CullScheduler(3, 4)
-    const lastServed = new Array<number>(sets.length).fill(0)
+    scheduler.update(sets, camera(0, 0, 0))
+    expect(servedLastFrame(spies)).toBe(10)
+    // driving at ~50 m/s and 30 fps: every set wants a re-cull every few frames, nobody is overdue
+    const perFrame: number[] = []
     for (let frame = 1; frame <= 40; frame++) {
-      // the camera moves far every frame, so every set always wants a re-cull
-      scheduler.update(sets, camera(frame * 10, 0, 0))
-      const served = spies.map((s) => s.mock.results.at(-1)?.value === true)
-      const n = served.filter(Boolean).length
-      if (frame === 1) expect(n).toBe(sets.length) // never-culled sets are served at once
-      else expect(n).toBeLessThanOrEqual(3 + sets.length) // budget plus overdue sets
-      served.forEach((s, i) => {
-        if (s) lastServed[i] = frame
-        expect(frame - lastServed[i], `set ${i} at frame ${frame}`).toBeLessThanOrEqual(4)
-      })
-      if (frame > 5) expect(n).toBeGreaterThanOrEqual(1)
+      scheduler.update(sets, camera(frame * 1.7, 0, 0))
+      perFrame.push(servedLastFrame(spies))
     }
+    for (const n of perFrame) expect(n).toBeLessThanOrEqual(3)
+    expect(perFrame.reduce((a, b) => a + b, 0)).toBeGreaterThan(40) // the budget is used
   })
 
-  it('serves only the budget when no set is overdue', () => {
-    const sets = Array.from({ length: 6 }, () => InstancedProps.fromTemplate(template(), [placeMatrix(0, 0, 30)]))
-    const scheduler = new CullScheduler(2, 100)
+  it('serves every waiting set once it has waited the deferral limit', () => {
+    const sets = makeSets(10)
+    const scheduler = new CullScheduler(1, 3)
     scheduler.update(sets, camera(0, 0, 0))
     const spies = sets.map((s) => vi.spyOn(s, 'update'))
-    const servedPerFrame: number[] = []
-    for (let frame = 0; frame < 6; frame++) {
-      scheduler.update(sets, camera(50 + frame * 10, 0, 0))
-      servedPerFrame.push(spies.filter((s) => s.mock.results.at(-1)?.value === true).length)
-      spies.forEach((s) => s.mockClear())
+    const served = new Set<number>()
+    // one small step (past the re-cull distance, short of a jump), then the camera holds still
+    const cam = camera(6.5, 0, 0)
+    for (let frame = 1; frame <= 4; frame++) {
+      scheduler.update(sets, cam)
+      const now = spies.flatMap((s, i) => (s.mock.results.at(-1)?.value === true ? [i] : []))
+      if (frame < 4) expect(now.length, `frame ${frame}`).toBe(1) // budget only
+      now.forEach((i) => served.add(i))
     }
-    expect(servedPerFrame).toEqual([2, 2, 2, 2, 2, 2])
+    expect(served.size).toBe(10) // frame 4: the rest were overdue
+  })
+
+  it('re-culls every set the same frame after a teleport or a sharp turn', () => {
+    const sets = makeSets(10)
+    const scheduler = new CullScheduler(1, 100)
+    scheduler.update(sets, camera(0, 0, 0))
+    const spies = sets.map((s) => vi.spyOn(s, 'update'))
+    scheduler.update(sets, camera(400, 300, 0)) // camera.snap() to a checkpoint
+    expect(servedLastFrame(spies)).toBe(10)
+    scheduler.update(sets, camera(400, 300, 0.3)) // a fast drift spin
+    expect(servedLastFrame(spies)).toBe(10)
   })
 })

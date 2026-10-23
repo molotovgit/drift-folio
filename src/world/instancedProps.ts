@@ -16,17 +16,29 @@ const GRID_CELL = 48
 const RECULLS_PER_FRAME = 4
 /** …but no set waits longer than this many frames for its turn. */
 const MAX_DEFER_FRAMES = 6
+/**
+ * A set that has drifted this far (m) or turned this far (rad) from its last
+ * cull re-culls at once, skipping the queue: teleports (camera.snap after a
+ * reset) and fast drift spins must never show a stale packing.
+ */
+const JUMP_MOVE = 20
+const JUMP_TURN = 2 * RECULL_TURN
+/**
+ * Extra cone angle covering a deferred re-cull: a waiting set may have turned
+ * up to JUMP_TURN, i.e. RECULL_TURN beyond the trigger the cone already allows.
+ */
+const DEFER_TURN = 0.15
 
 /**
  * Cosine of the half-angle of the horizontal view cone for culling: the camera's
  * horizontal half-FOV (from vertical FOV and aspect), plus the turn allowed
- * between re-culls, plus a margin for prop size.
+ * between re-culls (and while one is deferred), plus a margin for prop size.
  */
 export function cullConeCos(camera: THREE.Camera): number {
   const cam = camera as THREE.PerspectiveCamera
   const halfV = cam.isPerspectiveCamera ? THREE.MathUtils.degToRad(cam.fov / 2) : Math.PI / 4
   const halfH = Math.atan(Math.tan(halfV) * (cam.isPerspectiveCamera ? cam.aspect : 1))
-  return Math.cos(Math.min(Math.PI, halfH + RECULL_TURN + PROP_MARGIN))
+  return Math.cos(Math.min(Math.PI, halfH + RECULL_TURN + DEFER_TURN + PROP_MARGIN))
 }
 
 /** Options for an instanced prop set. */
@@ -49,12 +61,14 @@ export interface InstanceOptions {
  * Spreads re-culls of many prop sets over several frames: each frame at most
  * RECULLS_PER_FRAME sets that need one get it, starting after the last set
  * served (round-robin), and a set that has waited MAX_DEFER_FRAMES is served
- * regardless. Sets that have never been culled are always served at once.
+ * regardless. Sets never culled yet, or whose camera jumped, are served at once.
  */
 export class CullScheduler {
   private frameNo = 0
   private budget = 0
   private next = 0
+  /** this frame's camera direction, computed once for every set */
+  readonly viewDir = new THREE.Vector3()
 
   constructor(
     private readonly perFrame = RECULLS_PER_FRAME,
@@ -69,6 +83,7 @@ export class CullScheduler {
   update(sets: readonly InstancedProps[], camera: THREE.Camera): void {
     this.frameNo++
     this.budget = this.perFrame
+    camera.getWorldDirection(this.viewDir)
     const n = sets.length
     let last = -1
     for (let k = 0; k < n; k++) {
@@ -176,6 +191,11 @@ export class InstancedProps {
     return this.visible
   }
 
+  /** Instances built into this set (drawn or not). */
+  get instanceCount(): number {
+    return this.transforms.length
+  }
+
   /**
    * Draw only instances whose keep roll is below `frac` (1 = all). Rolls are
    * fixed per instance, so a lower fraction always draws a subset of a higher
@@ -190,18 +210,22 @@ export class InstancedProps {
 
   /**
    * Re-pack visible instances when the camera has moved or turned enough. With
-   * a scheduler the re-cull may be deferred to a later frame. Returns true if
-   * it re-culled.
+   * a scheduler the re-cull may be deferred to a later frame, unless the
+   * camera jumped (see JUMP_MOVE). Returns true if it re-culled.
    */
   update(camera: THREE.Camera, scheduler?: CullScheduler): boolean {
     if (!this.culled) return false
-    camera.getWorldDirection(this.dir)
+    if (scheduler) this.dir.copy(scheduler.viewDir)
+    else camera.getWorldDirection(this.dir)
     const fresh = this.lastCamPos.x === Infinity
-    if (!fresh && this.lastCamPos.distanceToSquared(camera.position) < RECULL_MOVE ** 2 && this.lastCamDir.dot(this.dir) > Math.cos(RECULL_TURN)) {
+    const moved2 = fresh ? Infinity : this.lastCamPos.distanceToSquared(camera.position)
+    const turn = fresh ? -1 : this.lastCamDir.dot(this.dir)
+    if (moved2 < RECULL_MOVE ** 2 && turn > Math.cos(RECULL_TURN)) {
       this.waitingSince = -1
       return false
     }
-    if (scheduler && !fresh) {
+    const jumped = moved2 > JUMP_MOVE ** 2 || turn < Math.cos(JUMP_TURN)
+    if (scheduler && !jumped) {
       if (this.waitingSince < 0) this.waitingSince = scheduler.frame
       if (!scheduler.grant(this.waitingSince)) return false
     }
@@ -266,7 +290,8 @@ export class InstancedProps {
   /** Draw the first `n` packed slots and upload just that range. */
   private commit(n: number): void {
     this.visible = n
-    for (const { mesh } of this.meshes) {
+    for (let m = 0; m < this.meshes.length; m++) {
+      const mesh = this.meshes[m].mesh
       mesh.count = n
       mesh.instanceMatrix.clearUpdateRanges()
       mesh.instanceMatrix.addUpdateRange(0, n * 16)

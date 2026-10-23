@@ -29,9 +29,10 @@ const LOOKS: Readonly<Record<RoadsideKind, KindLook>> = {
 
 /**
  * The roadside dressing (grass, flowers, susuki, ferns, shrubs, rocks, bamboo
- * groves and jizo statues): one culled InstancedProps per kind. Every kind is
- * built at the full (high-tier) count; a quality tier only thins what is
- * drawn, so the perf governor can drop the tier at runtime (`setTier`).
+ * groves and jizo statues): one culled InstancedProps per kind. Only the
+ * starting tier's plants are built; a lower tier thins them further at runtime
+ * (`setTier`) because the per-item keep rolls are absolute thresholds. The
+ * perf governor only ever steps quality down, so nothing above it is needed.
  * No colliders and no cast shadows; plants are pass-through.
  */
 export class Roadside {
@@ -44,11 +45,11 @@ export class Roadside {
     return [...this.byKind.values()]
   }
 
-  /** Build every kind's instances (glTF rocks load asynchronously), thinned for `tier`. */
+  /** Build the instances `tier` draws (glTF rocks load asynchronously). */
   static async build(layout: RoadsideLayout, tier: QualityTier): Promise<Roadside> {
     const roadside = new Roadside()
     const itemsByKind = new Map<RoadsideKind, RoadsideItem[]>()
-    for (const it of layout.items) {
+    for (const it of layout.forTier(tier)) {
       let list = itemsByKind.get(it.kind)
       if (!list) itemsByKind.set(it.kind, (list = []))
       list.push(it)
@@ -59,7 +60,7 @@ export class Roadside {
     return roadside
   }
 
-  /** Thin every kind to its fraction for `tier` (low ⊂ mid ⊂ high: the per-item rolls are fixed). */
+  /** Thin every kind to its fraction for `tier` (low ⊂ mid ⊂ high: the per-item rolls are fixed); never adds plants beyond the built tier. */
   setTier(tier: QualityTier): void {
     for (const [kind, set] of this.byKind) set.setThinning(ROADSIDE_KINDS[kind].tier[tier])
   }

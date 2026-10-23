@@ -133,6 +133,12 @@ describe('roadside: quality tier at runtime', () => {
     expect(low).toBeLessThan(mid)
     // the same as building for the low tier in the first place
     expect(drawn(await Roadside.build(layout, 'low'))).toBe(low)
+    // a phone starting on mid builds only mid's plants and can still drop to low
+    const fromMid = await Roadside.build(layout, 'mid')
+    expect(drawn(fromMid)).toBe(mid)
+    expect(fromMid.sets.reduce((n, s) => n + s.instanceCount, 0)).toBe(layout.forTier('mid').filter((it) => it.kind !== 'rock').length)
+    fromMid.setTier('low')
+    expect(drawn(fromMid)).toBe(low)
     r.setTier('high')
     expect(drawn(r)).toBe(high)
     warn.mockRestore()
