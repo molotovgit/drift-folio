@@ -1,0 +1,36 @@
+import { expect, test } from '@playwright/test'
+
+test('boots with no console errors and shows the canvas', async ({ page }) => {
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto('/')
+  await expect(page.locator('#scene')).toBeVisible()
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1' || document.documentElement.dataset.gpu === 'none', null, { timeout: 30_000 })
+  expect(errors).toEqual([])
+})
+
+test('skip link shows all nine cards; public ones link to GitHub, private ones do not', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Skip the game' }).click()
+  await expect(page.locator('#skip-overlay .card')).toHaveCount(9)
+  await expect(page.locator('.card[data-id="C4"] a.card__go')).toHaveAttribute('href', /github\.com\/molotovgit\//)
+  await expect(page.locator('.card[data-id="C1"] a')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Back to the mountain' }).click()
+  await expect(page.locator('#skip-overlay')).toBeHidden()
+})
+
+test('opens the overlay by itself when no GPU backend exists', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true })
+    const orig = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, id: string, ...rest: unknown[]) {
+      if (id === 'webgl2' || id === 'webgl') return null
+      return (orig as (...a: unknown[]) => unknown).call(this, id, ...rest)
+    } as typeof orig
+  })
+  await page.goto('/')
+  await expect(page.locator('#skip-overlay')).toBeVisible()
+  await expect(page.locator('#skip-reason')).toContainText('cannot run')
+  await expect(page.getByRole('button', { name: 'Back to the mountain' })).toBeHidden()
+})
