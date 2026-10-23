@@ -6,15 +6,31 @@
   <title>Amirbek · Drift Folio</title>
   <meta name="description" content="Amirbek's portfolio. Drift an FD down a Japanese mountain; every corner is a project.">
   <meta name="theme-color" content="#2a1840">
+  <meta property="og:title" content="Amirbek · Drift Folio">
+  <meta property="og:description" content="Drift an FD down a Japanese mountain at dusk; every corner is one of my projects.">
+  <meta property="og:image" content="https://molotovgit.github.io/drift-folio/og.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232a1840'/%3E%3Cpath d='M14 40 Q32 8 50 40' stroke='%23ff5c8a' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='44' r='6' fill='%232fb8a8'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;1,700;1,800&family=Barlow:wght@400;600&display=swap">
-  <script type="module" crossorigin src="./assets/index-D5PVtYQy.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-2Wy5nvhi.css">
+  <script type="module" crossorigin src="./assets/index-DZSEONrD.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-t9mzJa-N.css">
 </head>
 <body>
   <canvas id="scene" tabindex="-1" aria-label="Drivable 3D mountain with Amirbek's projects"></canvas>
   <div id="hud" aria-live="polite"></div>
+  <div id="loading" class="loading" role="progressbar" aria-label="Loading the mountain" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div class="loading__inner">
+      <p class="loading__eyebrow">amirbek.is-a.dev</p>
+      <h1 class="loading__title">AMIRBEK</h1>
+      <p class="loading__line">Mostly systems work — an Android port of a 2003 RTS, education platform backends, and a few automation rigs.</p>
+      <div class="loading__track"><div id="loading-bar" class="loading__bar"></div></div>
+      <p id="loading-label" class="loading__label">Warming up the tyres…</p>
+      <p class="loading__keys">W/↑ gas · S/↓ brake · A D steer · SPACE drift · SHIFT clutch kick · C camera · R reset · M mute</p>
+    </div>
+  </div>
   <button id="skip-link" class="skip-link" type="button">Skip the game</button>
   <noscript>
     <main style="padding:24px;font-family:sans-serif;color:#fff">
