@@ -1,13 +1,17 @@
 import * as THREE from 'three/webgpu'
 import { palette } from './palette'
 
+/** reused by nearestAnchors so the per-frame call does not allocate */
+const scratchDists: number[] = []
+
 /**
  * Indices of the n anchors closest to (x, z), nearest first. `anchors` is a flat
  * [x0, z0, x1, z1, …] array. Writes into `out` (reused) to avoid per-frame allocation.
  */
 export function nearestAnchors(anchors: ArrayLike<number>, x: number, z: number, n: number, out: number[] = []): number[] {
   out.length = 0
-  const dists: number[] = []
+  const dists = scratchDists
+  dists.length = 0
   const count = anchors.length / 2
   for (let i = 0; i < count; i++) {
     const dx = anchors[i * 2] - x
