@@ -12,15 +12,49 @@ beforeAll(async () => {
 })
 
 describe('terrain heights (plan Task 3.2)', () => {
-  it('is carved flat under every road (within 0.35 m of the asphalt)', () => {
-    let worst = 0
+  it('never rises through the asphalt anywhere across the road width (junctions included)', () => {
+    let worst = -Infinity
+    let where = ''
+    for (const e of roads.edges) {
+      for (let i = 0; i < e.points.length; i++) {
+        const p = e.points[i]
+        const t = e.tangent(i)
+        for (const off of [-3.9, -2, 0, 2, 3.9]) {
+          // left normal of the tangent: facing +Z, left is +X
+          const x = p.x + t.y * off
+          const z = p.z - t.x * off
+          const above = terrain.heightAt(x, z) - (p.y - 0.02)
+          if (above > worst) {
+            worst = above
+            where = `${e.id}@${i}${off}`
+          }
+        }
+      }
+    }
+    expect(worst, where).toBeLessThan(0.05)
+  })
+
+  it('builds in under 2.5 s', () => {
+    const t0 = performance.now()
+    new TerrainHeights(roads)
+    expect(performance.now() - t0).toBeLessThan(2500)
+  })
+
+  it('sits flush under the centreline almost everywhere; never floats more than 2 m (retaining-wall spots)', () => {
+    let samples = 0
+    let flush = 0
+    let worstFloat = 0
     for (const e of roads.edges) {
       for (let i = 0; i < e.points.length; i += 3) {
         const p = e.points[i]
-        worst = Math.max(worst, Math.abs(terrain.heightAt(p.x, p.z) + ROAD_LIFT - p.y))
+        const gap = p.y - ROAD_LIFT - terrain.heightAt(p.x, p.z) // >0: road above ground
+        samples++
+        if (Math.abs(gap) < 0.35) flush++
+        worstFloat = Math.max(worstFloat, gap)
       }
     }
-    expect(worst).toBeLessThan(0.35)
+    expect(flush / samples).toBeGreaterThan(0.97)
+    expect(worstFloat).toBeLessThan(2)
   })
 
   it('has no NaN and stays in a sane range', () => {

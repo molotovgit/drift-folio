@@ -12,7 +12,7 @@ export class TerrainCollider {
 
   constructor(world: RAPIER.World, terrain: TerrainHeights) {
     const n = terrain.cells + 1
-    // our grid is row-major [iz][ix]; Rapier's column-major [col=ix][row=iz] is the same memory order
+    // our grid is row-major [iz][ix]; Rapier wants column-major with X as the major axis, so transpose
     const heights = new Float32Array(n * n)
     for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) heights[ix * n + iz] = terrain.heights[iz * n + ix]
     const { minX, minZ, size } = terrain.bounds

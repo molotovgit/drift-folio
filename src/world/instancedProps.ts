@@ -5,11 +5,23 @@ import { ModelLibrary } from '../render/loadModel'
 export const CULL_DISTANCE = 380
 /** Everything this close is drawn regardless of direction (shadows, mirrors of view when reversing). */
 const ALWAYS_RADIUS = 45
-/** Half-angle of the view cone used for culling, a bit wider than the camera FOV. */
-const CONE_COS = Math.cos((70 * Math.PI) / 180)
-/** Re-cull when the camera moved this far or turned this much since the last cull. */
+/** Re-cull when the camera moved this far or turned this far (radians) since the last cull. */
 const RECULL_MOVE = 6
-const RECULL_TURN = 0.04
+const RECULL_TURN = 0.12
+/** extra angle so a prop's canopy (not just its trunk origin) is kept near the cone edge */
+const PROP_MARGIN = 0.2
+
+/**
+ * Cosine of the half-angle of the horizontal view cone for culling: the camera's
+ * horizontal half-FOV (from vertical FOV and aspect), plus the turn allowed
+ * between re-culls, plus a margin for prop size.
+ */
+export function cullConeCos(camera: THREE.Camera): number {
+  const cam = camera as THREE.PerspectiveCamera
+  const halfV = cam.isPerspectiveCamera ? THREE.MathUtils.degToRad(cam.fov / 2) : Math.PI / 4
+  const halfH = Math.atan(Math.tan(halfV) * (cam.isPerspectiveCamera ? cam.aspect : 1))
+  return Math.cos(Math.min(Math.PI, halfH + RECULL_TURN + PROP_MARGIN))
+}
 
 /**
  * Many copies of one glTF model with instancing and CPU culling: one
@@ -69,7 +81,7 @@ export class InstancedProps {
   update(camera: THREE.Camera): void {
     if (!this.culled) return
     camera.getWorldDirection(this.dir)
-    if (this.lastCamPos.distanceToSquared(camera.position) < RECULL_MOVE ** 2 && this.lastCamDir.dot(this.dir) > 1 - RECULL_TURN) return
+    if (this.lastCamPos.distanceToSquared(camera.position) < RECULL_MOVE ** 2 && this.lastCamDir.dot(this.dir) > Math.cos(RECULL_TURN)) return
     this.lastCamPos.copy(camera.position)
     this.lastCamDir.copy(this.dir)
 
@@ -79,13 +91,14 @@ export class InstancedProps {
     const hl = Math.hypot(this.dir.x, this.dir.z) || 1
     const fx = this.dir.x / hl
     const fz = this.dir.z / hl
+    const coneCos = cullConeCos(camera)
     let n = 0
     for (let i = 0; i < this.transforms.length; i++) {
       const dx = this.positions[i * 3] - cx
       const dz = this.positions[i * 3 + 2] - cz
       const d = Math.hypot(dx, dz)
       if (d > CULL_DISTANCE) continue
-      if (d > ALWAYS_RADIUS && (dx * fx + dz * fz) / d < CONE_COS) continue
+      if (d > ALWAYS_RADIUS && (dx * fx + dz * fz) / d < coneCos) continue
       for (const { mesh, local } of this.meshes) mesh.setMatrixAt(n, this.combined.multiplyMatrices(this.transforms[i], local))
       n++
     }

@@ -270,6 +270,8 @@ Instanced maples and pines with seeded placement off-road; torii at summit; tunn
 
 ---
 
+> **M3 deviations (2026-10-23):** heightfield 355² cells (4 m) instead of 512² — the flat road carve hides the coarser grid and it halves build time; the fall rule is relative (15 m below the terrain) instead of absolute −200 m; tunnel, railway and power lines move to M7 with the shortcuts that use them; the scene draw-call budget is measured at the low tier because bloom's screen passes inflate renderer.info.
+
 ## M4 · Most Wanted drift scoring and HUD
 
 ### Task 4.1: Score state machine

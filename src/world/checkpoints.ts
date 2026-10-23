@@ -8,17 +8,17 @@ export interface Checkpoint {
   edgeId: string
 }
 
-export type ResetReason = 'fell' | 'stuck'
+export type ResetReason = 'fell' | 'stuck' | 'manual'
 
 /** Spacing of checkpoints along every road (plan Task 3.4). */
 export const CHECKPOINT_SPACING = 50
 /** off-road and slower than this for STUCK_SECONDS → auto reset */
 const STUCK_SPEED = 0.5
 export const STUCK_SECONDS = 4
-/** further than this below the ground → fell out of the world */
 const FALL_DEPTH = 15
-/** the car "passes" a checkpoint when within this distance of it */
+/** the car "passes" a checkpoint when within this 3D distance (3D so stacked switchbacks don't latch the wrong level) */
 const PASS_RADIUS = 10
+/** further than this below the ground counts as fallen (relative to terrain, not an absolute height: deviation from plan's -200 m, the mountain spans 0..-120 m) */
 
 /** What Checkpoints needs to know about the car each frame. */
 export interface CarState {
@@ -73,12 +73,12 @@ export class Checkpoints {
     return null
   }
 
-  /** Nearest checkpoint within maxDist (horizontal), or null. */
+  /** Nearest checkpoint within maxDist (3D), or null. */
   nearest(p: Vec3, maxDist = Infinity): Checkpoint | null {
     let best: Checkpoint | null = null
     let bestD = maxDist
     for (const c of this.all) {
-      const d = Math.hypot(c.pos.x - p.x, c.pos.z - p.z)
+      const d = Math.hypot(c.pos.x - p.x, c.pos.y - p.y, c.pos.z - p.z)
       if (d < bestD) {
         bestD = d
         best = c

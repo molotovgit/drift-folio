@@ -61,8 +61,8 @@ export const TERRAIN_CELLS = 355
 /** road surface sits this far above the carved terrain under it */
 export const ROAD_LIFT = 0.12
 /** terrain is carved flat this far from the road centreline, then blends out */
-const CARVE_FLAT = 6.5
-const CARVE_BLEND = 22
+const CARVE_FLAT = 10
+const CARVE_BLEND = 28
 /** coarse road samples used for the smooth "valley" height field */
 const COARSE_STEP = 5
 
@@ -82,12 +82,12 @@ export class TerrainHeights {
   constructor(private readonly roads: RoadNetwork) {
     const n = this.cells + 1
     this.heights = new Float32Array(n * n)
-    const coarse = this.coarseRoadSamples()
+    const base = this.baseGrid()
     for (let iz = 0; iz < n; iz++) {
       for (let ix = 0; ix < n; ix++) {
         const x = this.bounds.minX + (ix / this.cells) * this.bounds.size
         const z = this.bounds.minZ + (iz / this.cells) * this.bounds.size
-        this.heights[iz * n + ix] = this.computeHeight(x, z, coarse)
+        this.heights[iz * n + ix] = this.computeHeight(x, z, base.at(x, z))
       }
     }
   }
@@ -113,18 +113,44 @@ export class TerrainHeights {
     return lerp(lerp(a, b, fx), lerp(c, d, fx), fz)
   }
 
-  private computeHeight(x: number, z: number, coarse: CoarseSamples): number {
-    const hit = this.roads.index.nearest(x, z, CARVE_BLEND + 4)
-    const base = coarse.smoothHeight(x, z)
+  private computeHeight(x: number, z: number, base: number): number {
+    const hits = this.roads.index.nearestPerEdge(x, z, CARVE_BLEND + 4)
+    const hit = hits[0]
     // hills rise away from the roads; a gentle large-scale swell plus finer ridges
     const away = hit ? smooth(CARVE_FLAT + 4, 90, hit.dist) : 1
     const swell = (this.noise.fbm(x / 260, z / 260, 3) - 0.35) * 70
     const ridges = (this.noise.fbm(x / 70, z / 70, 4) - 0.5) * 22
     const natural = base + (swell + ridges) * away
     if (!hit) return natural
-    // carve: flat under the asphalt, blending out to the natural slope
-    const carved = hit.point.y - ROAD_LIFT
-    return lerp(carved, natural, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
+    // carve: flat under the nearest road, blending out to the natural slope
+    let h = lerp(hit.point.y - ROAD_LIFT, natural, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
+    // never let the ground rise through any road surface (junctions, stacked switchbacks)
+    for (const other of hits) if (other.dist < CARVE_FLAT) h = Math.min(h, other.point.y - ROAD_LIFT)
+    return h
+  }
+
+  /**
+   * The smooth road-following body is expensive (Gaussian over nearby road samples),
+   * so evaluate it on a coarse grid once and bilinearly interpolate per vertex.
+   */
+  private baseGrid() {
+    const coarse = this.coarseRoadSamples()
+    const step = 4 // one base sample per 4 terrain cells
+    const m = Math.ceil(this.cells / step) + 1
+    const grid = new Float32Array(m * m)
+    const span = (step / this.cells) * this.bounds.size
+    for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) grid[j * m + i] = coarse.smoothHeight(this.bounds.minX + i * span, this.bounds.minZ + j * span)
+    return {
+      at: (x: number, z: number) => {
+        const gx = clamp((x - this.bounds.minX) / span, 0, m - 1 - 1e-6)
+        const gz = clamp((z - this.bounds.minZ) / span, 0, m - 1 - 1e-6)
+        const i = Math.floor(gx)
+        const j = Math.floor(gz)
+        const fx = gx - i
+        const fz = gz - j
+        return lerp(lerp(grid[j * m + i], grid[j * m + i + 1], fx), lerp(grid[(j + 1) * m + i], grid[(j + 1) * m + i + 1], fx), fz)
+      },
+    }
   }
 
   private coarseRoadSamples(): CoarseSamples {
@@ -142,7 +168,7 @@ export class TerrainHeights {
  * grid. Gives a smooth mountain body that follows the roads' descent.
  */
 class CoarseSamples {
-  private readonly grid = new Map<string, { x: number; y: number; z: number }[]>()
+  private readonly grid = new Map<number, { x: number; y: number; z: number }[]>()
   private static readonly CELL = 40
   private static readonly RADIUS = 160
   private static readonly SIGMA = 70
@@ -183,7 +209,7 @@ class CoarseSamples {
     return wSum > 1e-6 ? hSum / wSum : nearestY
   }
 
-  private key(cx: number, cz: number): string {
-    return `${cx},${cz}`
+  private key(cx: number, cz: number): number {
+    return (cx + 4096) * 8192 + (cz + 4096)
   }
 }

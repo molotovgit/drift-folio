@@ -34,7 +34,8 @@ type FrameCallback = (dt: number, time: number) => void
  */
 export class Engine {
   readonly scene = new THREE.Scene()
-  readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2500)
+  // near 0.25 m keeps depth precision for coplanar-ish road overlaps at distance
+  readonly camera = new THREE.PerspectiveCamera(60, 1, 0.25, 2500)
   readonly isMobile = isMobileDevice()
 
   private dprCap: number

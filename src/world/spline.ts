@@ -1,8 +1,13 @@
 import type { Vec2 } from '../core/math'
 
 /**
- * Centripetal Catmull-Rom through 2D control points (x, z), resampled at a
- * fixed arc-length spacing. Endpoints are included exactly.
+ * 2D helpers for road centrelines. Points are world (x, z) stored in Vec2 as
+ * (x, y=z). World convention: facing +Z, the driver's left is +X.
+ */
+
+/**
+ * Centripetal Catmull-Rom through 2D control points, resampled at a fixed
+ * arc-length spacing. Endpoints are included exactly.
  */
 export function catmullRom2D(ctrl: Vec2[], spacing: number): Vec2[] {
   if (ctrl.length < 2) return ctrl.map((p) => ({ ...p }))
@@ -62,7 +67,11 @@ export function resample(line: Vec2[], spacing: number): Vec2[] {
   return out
 }
 
-/** Signed curvature radius at each sample (inf on straights). */
+/**
+ * Signed horizontal turn radius at each sample (Infinity on straights).
+ * Sign: + = turning toward the driver's LEFT (+X when facing +Z).
+ * In the (x, z) plane a left turn is clockwise, so the raw cross product is negated.
+ */
 export function radii(points: Vec2[]): number[] {
   return points.map((_, i) => {
     const a = points[Math.max(0, i - 3)]
@@ -73,6 +82,6 @@ export function radii(points: Vec2[]): number[] {
     const ca = dist(c, a)
     const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
     if (Math.abs(cross) < 1e-6) return Infinity
-    return (ab * bc * ca) / (2 * cross) // sign: + = turning left (CCW)
+    return -(ab * bc * ca) / (2 * cross)
   })
 }

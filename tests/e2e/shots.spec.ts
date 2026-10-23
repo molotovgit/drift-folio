@@ -5,7 +5,7 @@ import { test, type Page } from '@playwright/test'
 const env = (globalThis as unknown as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
 test.skip(!env.SHOTS, 'screenshots only when SHOTS=1')
 
-type Drift = { telemetry: () => { speed: number; drifting: boolean } }
+type Drift = { telemetry: () => { speed: number; drifting: boolean }; teleport: (e: string, f: number) => boolean; hairpinFrac: (e: string) => number }
 const tel = (page: Page) => page.evaluate(() => (window as unknown as { __drift: Drift }).__drift.telemetry())
 
 for (const tier of ['high', 'low'] as const) {
@@ -17,12 +17,16 @@ for (const tier of ['high', 'low'] as const) {
     await page.locator('#scene').click()
     await page.waitForTimeout(2000)
     await page.screenshot({ path: `test-results/shots/${tier}-1-start.png` })
-    // drive up to the first lamp pair and pass under it
-    await page.keyboard.down('KeyW')
-    await page.waitForFunction(() => (window as unknown as { __drift: Drift }).__drift.telemetry().speed > 12, null, { timeout: 90_000 })
-    await page.keyboard.up('KeyW')
-    await page.waitForTimeout(600)
+    // a Systems Drop hairpin under its lamp: stop just before the apex
+    await page.evaluate(() => {
+      const d = (window as unknown as { __drift: Drift }).__drift
+      d.teleport('systems-a', Math.max(0, d.hairpinFrac('systems-a') - 0.03))
+    })
+    await page.waitForTimeout(3000)
     await page.screenshot({ path: `test-results/shots/${tier}-2-lamp.png` })
+    // drift shot on the Automation Pass sweepers
+    await page.evaluate(() => (window as unknown as { __drift: Drift }).__drift.teleport('automation', 0.08))
+    await page.waitForTimeout(1500)
     await page.keyboard.down('KeyW')
     await page.waitForFunction(() => (window as unknown as { __drift: Drift }).__drift.telemetry().speed > 16, null, { timeout: 90_000 })
     await page.keyboard.down('KeyD')

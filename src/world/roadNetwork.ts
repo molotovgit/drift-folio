@@ -25,7 +25,7 @@ export class RoadEdge {
   /** cumulative arc length at each sample */
   readonly dist: number[]
   readonly length: number
-  /** signed horizontal turn radius per sample (+ = turning left) */
+  /** signed horizontal turn radius per sample (+ = turning toward the driver's left, +X when facing +Z) */
   readonly radius: number[]
   readonly width = ROAD_WIDTH
 
@@ -85,7 +85,8 @@ export class RoadEdge {
 
 /** Spatial hash over all centreline samples for fast nearest-road queries. */
 export class RoadIndex {
-  private readonly grid = new Map<string, { edge: RoadEdge; index: number }[]>()
+  // numeric cell keys: string keys dominated terrain build time
+  private readonly grid = new Map<number, { edge: RoadEdge; index: number }[]>()
 
   constructor(
     edges: readonly RoadEdge[],
@@ -119,8 +120,28 @@ export class RoadIndex {
     return best
   }
 
-  private key(cx: number, cz: number): string {
-    return `${cx},${cz}`
+  /** Closest sample of every edge within maxDist (one hit per edge), nearest first. */
+  nearestPerEdge(x: number, z: number, maxDist: number): RoadHit[] {
+    const r = Math.ceil(maxDist / this.cell)
+    const cx = Math.floor(x / this.cell)
+    const cz = Math.floor(z / this.cell)
+    const best = new Map<RoadEdge, RoadHit>()
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (const { edge, index } of this.grid.get(this.key(cx + dx, cz + dz)) ?? []) {
+          const p = edge.points[index]
+          const d = Math.hypot(p.x - x, p.z - z)
+          if (d > maxDist) continue
+          const prev = best.get(edge)
+          if (!prev || d < prev.dist) best.set(edge, { edge, index, dist: d, point: p })
+        }
+      }
+    }
+    return [...best.values()].sort((a, b) => a.dist - b.dist)
+  }
+
+  private key(cx: number, cz: number): number {
+    return (cx + 4096) * 8192 + (cz + 4096)
   }
 }
 

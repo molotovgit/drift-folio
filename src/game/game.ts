@@ -195,6 +195,22 @@ export class Game {
       carModel: () => this.visual.root.getObjectByName('body') !== undefined,
       renderInfo: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
       drawnInstances: () => this.mountain?.drawnInstances ?? 0,
+      /** jump to a road sample facing along it (screenshots/tests); returns false without a mountain */
+      teleport: (edgeId: string, frac: number) => {
+        const e = this.mountain?.roads.edge(edgeId)
+        if (!e) return false
+        const i = Math.round((e.points.length - 1) * frac)
+        const t = e.tangent(i)
+        this.car.resetTo(e.points[i], Math.atan2(t.x, t.y))
+        this.camera.snap()
+        return true
+      },
+      /** first hairpin apex of an edge as a 0..1 fraction (or -1) */
+      hairpinFrac: (edgeId: string) => {
+        const e = this.mountain?.roads.edge(edgeId)
+        const i = e?.hairpinApexes()[0]
+        return e && i !== undefined ? i / (e.points.length - 1) : -1
+      },
     }
   }
 }

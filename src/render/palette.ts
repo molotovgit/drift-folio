@@ -10,7 +10,7 @@ export const palette = {
   pine: '#3b2f5a',
   road: '#5d4a72',
   roadLine: '#e8d9c0',
-  terrain: '#5a3457',
+  terrain: '#4d3350',
   terrainShadow: '#4a3060',
   rail: '#cfc6d8',
   metalDark: '#5a5266',

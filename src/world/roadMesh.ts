@@ -9,6 +9,13 @@ import type { RoadEdge, RoadNetwork } from './roadNetwork'
 
 /** Texture repeats every this many metres along the road. */
 const DASH_PERIOD = 8
+/**
+ * Where several roads meet, their ribbons overlap. Each road gets a different
+ * small lift near each shared node (by its rank among the roads at that node),
+ * fading out over JUNCTION_FADE metres, so overlaps never z-fight.
+ */
+const JUNCTION_LIFT = 0.018
+const JUNCTION_FADE = 16
 
 /** Left-hand unit normal (x, z) of a horizontal tangent: facing +Z, left is +X. */
 export const leftOf = (tx: number, tz: number) => ({ x: tz, z: -tx })
@@ -25,14 +32,17 @@ export class RoadMesh {
     const material = ToonMaterials.create({ color: '#ffffff', map: RoadMesh.markingsTexture(), flatShading: false })
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
     const parts: THREE.BufferGeometry[] = []
+    const rank = RoadMesh.junctionRanks(roads)
     for (const edge of roads.edges) {
       const { positions, uvs, indices } = RoadMesh.ribbon(edge)
+      const visual = RoadMesh.liftNearJunctions(positions, edge, rank.get(edge.id)!)
       const geo = new THREE.BufferGeometry()
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geo.setAttribute('position', new THREE.BufferAttribute(visual, 3))
       geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
       geo.setIndex(new THREE.BufferAttribute(indices, 1))
       geo.computeVertexNormals()
       parts.push(geo)
+      // the collider keeps the true (un-lifted) surface
       const collider = world.createCollider(RAPIER.ColliderDesc.trimesh(positions, indices).setFriction(0.9), body)
       surfaceOf.set(collider.handle, 'road')
       this.colliders.push(collider)
@@ -42,6 +52,33 @@ export class RoadMesh {
     mesh.receiveShadow = true
     mesh.name = 'roads'
     this.group.add(mesh)
+  }
+
+  /** Each edge's rank among the edges touching its start and end nodes (0 = drawn lowest). */
+  static junctionRanks(roads: RoadNetwork): Map<string, { from: number; to: number }> {
+    const atNode = new Map<string, string[]>()
+    for (const e of roads.edges) {
+      for (const n of [e.from, e.to]) {
+        const list = atNode.get(n) ?? []
+        list.push(e.id)
+        atNode.set(n, list)
+      }
+    }
+    const out = new Map<string, { from: number; to: number }>()
+    for (const e of roads.edges) out.set(e.id, { from: atNode.get(e.from)!.indexOf(e.id), to: atNode.get(e.to)!.indexOf(e.id) })
+    return out
+  }
+
+  /** Copy of ribbon positions with the per-junction lift applied near each end. */
+  static liftNearJunctions(positions: Float32Array, edge: RoadEdge, rank: { from: number; to: number }): Float32Array {
+    const out = positions.slice()
+    const fade = (d: number) => Math.max(0, 1 - d / JUNCTION_FADE)
+    for (let i = 0; i < edge.points.length; i++) {
+      const lift = JUNCTION_LIFT * (rank.from * fade(edge.dist[i]) + rank.to * fade(edge.length - edge.dist[i]))
+      out[i * 6 + 1] += lift
+      out[i * 6 + 4] += lift
+    }
+    return out
   }
 
   /** Two vertices per centreline sample, `width` apart, UV v in metres / DASH_PERIOD. */
