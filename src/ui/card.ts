@@ -1,5 +1,6 @@
 import { projects, routeNames, type CardId, type ProjectCard } from '../content/projects'
 import '../styles/card.css'
+import { SafeUrl } from '../util/safeUrl'
 import { skipOverlay } from './skip'
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
@@ -95,7 +96,7 @@ export class CardPanel {
     this.blurb.textContent = p.blurb
     this.chips.replaceChildren(...p.stack.map((s) => el('li', '', s)))
     // only GitHub links are ever opened from a card
-    this.url = p.public && p.url?.startsWith('https://github.com/') ? p.url : null
+    this.url = p.public ? SafeUrl.https(p.url, 'https://github.com/') : null
     if (this.url) this.link.href = this.url
     else this.link.removeAttribute('href')
     this.link.hidden = !this.url

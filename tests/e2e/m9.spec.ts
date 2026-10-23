@@ -1,4 +1,5 @@
 import { devices, expect, test } from '@playwright/test'
+import { LINK_PADS } from '../../src/world/townLayout'
 
 test.describe('phone, loading and audio (M9)', () => {
   test('the loading screen goes away once the mountain is ready', async ({ page }) => {
@@ -52,5 +53,18 @@ test.describe('touch controls', () => {
     await page.mouse.up()
     // the page itself never scrolls or zooms
     expect(await page.evaluate(() => [window.scrollX, window.scrollY])).toEqual([0, 0])
+  })
+
+  test('a town link pad shows a tappable OPEN link on a phone', async ({ page }) => {
+    test.setTimeout(240_000)
+    await page.goto('/?debug&quality=low')
+    await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 150_000 })
+    const open = page.locator('.touch__open')
+    await expect(open).toBeHidden()
+    await page.evaluate(([x, z]) => (window as unknown as { __drift: { teleportTo: (x: number, z: number) => void } }).__drift.teleportTo(x, z), [LINK_PADS.x, LINK_PADS.z0])
+    await expect(open).toBeVisible({ timeout: 60_000 })
+    await expect(open).toHaveAttribute('href', 'https://github.com/molotovgit')
+    await expect(open).toHaveAttribute('target', '_blank')
+    await expect(page.locator('.hud__hint')).toContainText('Tap OPEN for GitHub', { timeout: 30_000 })
   })
 })

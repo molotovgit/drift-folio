@@ -2,6 +2,7 @@ import type RAPIER from '@dimforge/rapier3d-compat'
 import type * as THREE from 'three/webgpu'
 import type { CardPanel } from '../ui/card'
 import type { Hud } from '../ui/hud'
+import type { TouchControls } from '../ui/touch'
 import { skipOverlay } from '../ui/skip'
 import type { SafeStorage } from '../util/storage'
 import type { Telemetry } from '../vehicle/driftCar'
@@ -23,6 +24,8 @@ export interface FeatureHost {
   hud: Hud
   cards: CardPanel
   session: DriftSession
+  /** on-screen controls on touch screens (null on desktop) */
+  touch: TouchControls | null
   /** repaint the player's car (secret livery) */
   setPaint(hex: string): void
 }
@@ -53,12 +56,15 @@ export class MountainFeatures {
     this.breakables = new Breakables(scene, world, mountain.roads, (x, z) => mountain.heightAt(x, z))
     host.session.runListener = {
       start: (route) => route === 'systems' && this.ghost.start(),
-      finish: (route, time) => route === 'systems' && this.onSystemsFinish(time),
+      finish: (route, time) => (route === 'systems' ? this.onSystemsFinish(time) : this.ghost.cancel()),
       abandon: () => this.ghost.cancel(),
     }
     // opening a link needs a real key press (popup blockers), so pads ask for Enter
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && this.padUrl && !skipOverlay.isOpen) window.open(this.padUrl, '_blank', 'noopener')
+      if (e.key !== 'Enter' || e.repeat || !this.padUrl || skipOverlay.isOpen) return
+      // Enter on a focused button or link (a card's "go", the skip link) belongs to that control
+      if (e.target instanceof Element && e.target.closest('a, button, input, textarea, select')) return
+      window.open(this.padUrl, '_blank', 'noopener')
     })
   }
 
@@ -112,13 +118,17 @@ export class MountainFeatures {
   private updateTown(t: Telemetry, now: number): void {
     const ev = this.town.update(t.pos, now)
     const url = ev.pad?.url ?? null
-    if (url && url !== this.padUrl) this.host.hud.hint(`Press Enter to open ${ev.pad!.label} ↗`)
+    if (url !== this.padUrl) {
+      if (ev.pad) this.host.hud.hint(this.host.touch ? `Tap OPEN for ${ev.pad.label} ↗` : `Press Enter to open ${ev.pad.label} ↗`)
+      this.host.touch?.setLink(ev.pad)
+    }
     this.padUrl = url
     if (ev.enteredLot) this.host.hud.routeBanner(ev.enteredLot === 'plaza' ? 'PIT GARAGE' : ev.enteredLot.toUpperCase())
     const g = ev.gymkhana
     if (g?.type === 'start') this.host.hud.hint('Gymkhana: go!')
     else if (g?.type === 'cone') this.host.hud.hint(`Cone +${g.penalty} s`)
     else if (g?.type === 'finish') this.host.hud.hint(`Gymkhana ${formatTime(g.time)}${g.best ? ' · new best' : ''}`)
+    else if (g?.type === 'abort') this.host.hud.hint('Gymkhana aborted: you left the course')
   }
 
   /** A Systems Drop run ended: did it beat the ghost? */

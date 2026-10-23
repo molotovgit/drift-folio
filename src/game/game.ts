@@ -124,12 +124,13 @@ export class Game {
     this.session = new DriftSession(mountain?.roads ?? null, this.hud, new RouteRuns(storage))
     this.audio = new AudioSystem({ storage })
     this.session.scoreListener = (e) => this.audio.event(e)
+    const touch = TouchControls.wanted() ? new TouchControls() : null
     this.features = mountain
-      ? new MountainFeatures({ scene, world: this.world, mountain, storage, hud: this.hud, cards: this.cards, session: this.session, setPaint: (hex) => this.visual.setPaint(hex) })
+      ? new MountainFeatures({ scene, world: this.world, mountain, storage, hud: this.hud, cards: this.cards, session: this.session, touch, setPaint: (hex) => this.visual.setPaint(hex) })
       : null
 
     // input
-    if (TouchControls.wanted()) this.input.addSource(new TouchControls())
+    if (touch) this.input.addSource(touch)
     // browsers only allow audio after a user gesture: unlock on the first input of any kind
     for (const type of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(type, () => this.audio.unlock(), { capture: true, passive: true })
     // ↑↑↓↓←→←→BA swaps the FD for a Hyper-V host on wheels
@@ -268,7 +269,7 @@ export class Game {
   private swapVisual(next: CarVisual, hint: string): void {
     this.engine.scene.remove(this.visual.root)
     this.visual = next
-    next.setHeadlights(true)
+    next.setHeadlights(this.post.tier !== 'low') // the low tier runs without headlights
     this.engine.scene.add(next.root)
     this.hud.hint(hint)
   }

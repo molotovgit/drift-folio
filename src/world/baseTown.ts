@@ -6,6 +6,7 @@ import { GymkhanaTimer, type GymkhanaEvent } from '../game/gymkhana'
 import { ZoneTriggers } from '../game/triggers'
 import { ModelLibrary } from '../render/loadModel'
 import { ToonMaterials } from '../render/toon'
+import { SafeUrl } from '../util/safeUrl'
 import type { SafeStorage } from '../util/storage'
 import { surfaceOf } from '../vehicle/wheel'
 import { DynamicProps } from './dynamicProps'
@@ -35,7 +36,7 @@ export class BaseTown {
   private readonly coneIdx: number[] = []
   private readonly coneHit = new Set<number>()
   private readonly lanternMats: THREE.MeshToonNodeMaterial[] = []
-  private readonly pads = about.links.map((l, i) => ({ ...l, x: LINK_PADS.x, z: LINK_PADS.z0 + i * LINK_PADS.spacing }))
+  private readonly pads = BaseTown.safeLinks().map((l, i) => ({ ...l, x: LINK_PADS.x, z: LINK_PADS.z0 + i * LINK_PADS.spacing }))
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -149,6 +150,15 @@ export class BaseTown {
   }
 
   /** Skills as tyre stacks: height = how much the skill is used (spec §7). */
+  /** The about links that are safe to open (https only); bad ones are dropped with a warning. */
+  private static safeLinks(): { label: string; url: string }[] {
+    return about.links.flatMap((l) => {
+      const url = SafeUrl.https(l.url)
+      if (!url) console.warn(`town pad "${l.label}" skipped: not an https link`)
+      return url ? [{ label: l.label, url }] : []
+    })
+  }
+
   private placeTyreRack(tyre: THREE.Group): void {
     const y0 = lot('plaza').y
     about.skills.forEach((s, i) => {

@@ -15,6 +15,8 @@ export class GhostLap {
   private player: GhostPlayer | null = null
   private mesh: THREE.Object3D | null = null
   private runTime: number | null = null
+  /** a Systems Drop run started with the ghost and has not finished or been cancelled */
+  private racing = false
   private beatenValue: boolean
 
   constructor(
@@ -49,7 +51,9 @@ export class GhostLap {
 
   /** A Systems Drop run started: the ghost starts with you. */
   start(): void {
-    if (this.player) this.runTime = 0
+    if (!this.player) return
+    this.runTime = 0
+    this.racing = true
   }
 
   /** Advance with the fixed physics step so the ghost stays in sync with the run clock. */
@@ -68,11 +72,15 @@ export class GhostLap {
     this.mesh.rotation.set(0, p.yaw, 0)
   }
 
-  /** The run finished in `time` seconds; returns true if this beat the ghost for the first time. */
+  /**
+   * The run finished in `time` seconds; returns true if this beat the ghost for
+   * the first time. Only a run that started with the ghost counts (a run that
+   * switched onto Systems Drop mid-way was timed from a different start).
+   */
   finish(time: number): boolean {
-    this.runTime = null
-    if (this.mesh) this.mesh.visible = false
-    if (!this.player || time >= this.player.duration || this.beatenValue) return false
+    const raced = this.racing
+    this.cancel()
+    if (!raced || !this.player || time >= this.player.duration || this.beatenValue) return false
     this.beatenValue = true
     this.storage.set('ghost-beaten', true)
     return true
@@ -81,6 +89,7 @@ export class GhostLap {
   /** Abandoned run (went back up, reset elsewhere). */
   cancel(): void {
     this.runTime = null
+    this.racing = false
     if (this.mesh) this.mesh.visible = false
   }
 

@@ -15,6 +15,7 @@ export class TouchControls implements AnalogSource {
   private steerTouch: { id: number; startX: number } | null = null
   private steer = 0
   private readonly held = { throttle: false, brake: false, handbrake: false }
+  private readonly openLink: HTMLAnchorElement
 
   constructor(parent: HTMLElement = document.body) {
     this.root = document.createElement('div')
@@ -27,8 +28,10 @@ export class TouchControls implements AnalogSource {
         <button class="touch__btn touch__btn--brake" data-k="brake">BRAKE</button>
         <button class="touch__btn touch__btn--gas" data-k="throttle">GAS</button>
       </div>
+      <a class="touch__open" target="_blank" rel="noopener" hidden></a>
       <p class="touch__rotate">Rotate your phone for the best view</p>`
     parent.append(this.root)
+    this.openLink = this.root.querySelector<HTMLAnchorElement>('.touch__open')!
     this.bindPad(this.root.querySelector<HTMLElement>('.touch__pad')!)
     for (const b of this.root.querySelectorAll<HTMLButtonElement>('.touch__btn')) this.bindButton(b, b.dataset.k as keyof TouchControls['held'])
   }
@@ -36,6 +39,17 @@ export class TouchControls implements AnalogSource {
   /** Touch screens only. */
   static wanted(): boolean {
     return matchMedia('(pointer: coarse)').matches
+  }
+
+  /**
+   * Show the OPEN button for a town link pad (null hides it). A real link, so a
+   * tap opens the page in a new tab without tripping popup blockers.
+   */
+  setLink(link: { label: string; url: string } | null): void {
+    this.openLink.hidden = !link
+    if (!link) return
+    this.openLink.href = link.url
+    this.openLink.textContent = `OPEN ${link.label} ↗`
   }
 
   read(): Partial<ControlState> | null {
