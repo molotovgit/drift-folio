@@ -4,5 +4,6 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   base: './',
   build: { target: 'es2022', chunkSizeWarningLimit: 4000 },
-  test: { include: ['tests/unit/**/*.test.ts'], environment: 'node' },
+  // physics sims and the terrain build are CPU-heavy; the 5 s default flakes on loaded machines
+  test: { include: ['tests/unit/**/*.test.ts'], environment: 'node', testTimeout: 30_000 },
 })

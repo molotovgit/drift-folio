@@ -12,14 +12,20 @@ import { SceneLighting } from '../render/lighting'
 import { LightPool } from '../render/lightPool'
 import { PostPipeline, type QualityTier } from '../render/post'
 import { SkyDome } from '../render/sky'
+import { CardPanel } from '../ui/card'
+import { Hud } from '../ui/hud'
 import { skipOverlay } from '../ui/skip'
+import { SafeStorage } from '../util/storage'
 import { BoxCarVisual, FdCarVisual, type CarVisual } from '../vehicle/carVisual'
-import { DriftCar, type Telemetry } from '../vehicle/driftCar'
+import { DriftCar, surfaceOf, type Telemetry } from '../vehicle/driftCar'
 import type { Checkpoint } from '../world/checkpoints'
 import { greyboxDressing, PropPlacer } from '../world/dressing'
 import { Greybox } from '../world/greybox'
 import { MountainWorld } from '../world/mountainWorld'
+import { ProjectCorners } from '../world/projectCorners'
 import type { GameOptions } from './options'
+import { RouteRuns } from './routeRun'
+import { DriftSession } from './session'
 
 const REAR_WHEELS = [2, 3] as const
 const WIND = new THREE.Vector3(0.9, 0, 0.4)
@@ -47,6 +53,16 @@ export class Game {
   private readonly mountain: MountainWorld | null
   private readonly pad: Greybox | null
   private controls: ControlState = idleControls()
+  private readonly session: DriftSession
+  private readonly hud: Hud
+  private readonly cards: CardPanel
+  /** the nine project corners (mountain only) */
+  private readonly corners: ProjectCorners | null
+  /** Rapier reports chassis contacts above the force threshold here (crash rule) */
+  private readonly events = new RAPIER.EventQueue(true)
+  private railHit = false
+  /** hard rail hits since load (debug telemetry) */
+  private railHits = 0
 
   private constructor(
     private readonly engine: Engine,
@@ -77,6 +93,12 @@ export class Game {
     this.embers = quality === 'high' ? new EmberSystem(scene) : null
     const mountain = this.mountain
     this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
+    const hudRoot = document.querySelector<HTMLElement>('#hud')!
+    this.hud = new Hud(hudRoot)
+    // outside the aria-live HUD, so a whole card is not read out on every open
+    this.cards = new CardPanel(document.body)
+    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(new SafeStorage('drift-folio:')))
+    this.corners = this.mountain ? new ProjectCorners(scene, this.mountain.roads) : null
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
   }
@@ -103,7 +125,8 @@ export class Game {
   /** Place the world's props, then hand the lamp bulbs to the light pool. */
   private async dress(): Promise<void> {
     if (this.mountain) {
-      await this.mountain.dress()
+      const mountain = this.mountain
+      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z))])
       this.lamps.setAnchors([...this.mountain.lamps])
     } else {
       const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
@@ -114,7 +137,14 @@ export class Game {
   /** One fixed physics tick. */
   private physicsTick(h: number): void {
     this.car.update(this.controls, h)
-    this.world.step()
+    this.world.step(this.events)
+    // a hard chassis contact with a guard rail is a crash (spec §8)
+    this.events.drainContactForceEvents((e) => {
+      if (surfaceOf.get(e.collider1()) === 'rail' || surfaceOf.get(e.collider2()) === 'rail') {
+        if (!this.railHit) this.railHits++
+        this.railHit = true
+      }
+    })
     this.car.wheels().forEach((w, i) => this.skids.step(i, w.contact ? w.contactPoint : null, w.slide))
   }
 
@@ -130,7 +160,15 @@ export class Game {
     const pose = this.car.pose(alpha)
     this.visual.sync(this.car, pose)
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
-    if (!paused && this.mountain?.checkpoints.update(t, dt)) this.resetCar()
+    if (!paused) {
+      if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
+      this.session.update({ t, dt, railHit: this.railHit, inShortcutZone: false })
+      this.railHit = false
+      this.mountain?.signposts.update(t)
+      const corner = this.corners?.update(t)
+      if (corner?.opened) this.cards.show(corner.opened)
+      else if (corner?.hinted) this.hud.hint('Drift this corner to open the card')
+    }
 
     this.camera.update(t, dt)
     const camPos = this.engine.camera.position
@@ -205,11 +243,38 @@ export class Game {
         this.camera.snap()
         return true
       },
+      /** jump to a road sample index (screenshots/tests) */
+      teleportIndex: (edgeId: string, index: number) => {
+        const e = this.mountain?.roads.edge(edgeId)
+        if (!e) return false
+        const i = Math.max(0, Math.min(e.points.length - 1, index))
+        const t = e.tangent(i)
+        this.car.resetTo(e.points[i], Math.atan2(t.x, t.y))
+        this.camera.snap()
+        return true
+      },
       /** first hairpin apex of an edge as a 0..1 fraction (or -1) */
       hairpinFrac: (edgeId: string) => {
         const e = this.mountain?.roads.edge(edgeId)
         const i = e?.hairpinApexes()[0]
         return e && i !== undefined ? i / (e.points.length - 1) : -1
+      },
+      score: () => this.session.score.state(),
+      openCard: () => this.cards.openId,
+      showCard: (id: string) => this.cards.show(id as never),
+      corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index, clip: s.clip, turn: s.turn })) ?? [],
+      route: () => this.session.route,
+      railHits: () => this.railHits,
+      /** drop the car at (x, z) on the ground, facing `yaw` */
+      teleportTo: (x: number, z: number, yaw = 0) => {
+        const y = this.mountain ? this.mountain.heightAt(x, z) + 0.15 : 0
+        this.car.resetTo({ x, y, z }, yaw)
+        this.camera.snap()
+      },
+      /** give the car `speed` m/s along its heading turned by `slipDeg` (left positive): an instant slide */
+      launch: (speed: number, slipDeg = 0) => {
+        const yaw = this.car.telemetry().yaw + (slipDeg * Math.PI) / 180
+        this.car.body.setLinvel({ x: Math.sin(yaw) * speed, y: 0, z: Math.cos(yaw) * speed }, true)
       },
     }
   }

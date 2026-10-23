@@ -8,6 +8,7 @@ import { InstancedProps, placeMatrix } from './instancedProps'
 import { lampSpots, landmarks, treeKeepOut, treeSpots } from './mountainLayout'
 import { RoadMesh } from './roadMesh'
 import { RoadNetwork } from './roadNetwork'
+import { Signposts } from './signposts'
 import { TerrainHeights } from './terrain'
 import { TerrainCollider } from './terrainCollider'
 import { TerrainMesh } from './terrainMesh'
@@ -25,6 +26,8 @@ export class MountainWorld {
   readonly start: Checkpoint
   readonly rails: GuardRails
   readonly terrainCollider: TerrainCollider
+  /** route signs at the two forks */
+  readonly signposts: Signposts
   private lampAnchors: THREE.Vector3[] = []
   /** culled instanced props (forest, lamps), re-culled every frame from the camera */
   private readonly instanced: InstancedProps[] = []
@@ -37,6 +40,7 @@ export class MountainWorld {
     this.terrainCollider = new TerrainCollider(world, this.terrain)
     scene.add(new TerrainMesh(this.terrain).mesh)
     scene.add(new RoadMesh(this.roads, world).group)
+    this.signposts = new Signposts(this.roads)
     this.rails = new GuardRails(this.roads, world)
     scene.add(this.rails.group)
 
@@ -81,7 +85,10 @@ export class MountainWorld {
       PropPlacer.place(this.scene, landmarks(this.roads, this.terrain)),
     ])
     for (const p of [lampProps, ...forest]) {
-      if (!(p instanceof InstancedProps)) continue
+      if (!(p instanceof InstancedProps)) {
+        this.signposts.label(p)
+        continue
+      }
       this.scene.add(p.group)
       this.instanced.push(p)
     }

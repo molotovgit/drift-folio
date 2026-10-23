@@ -24,6 +24,7 @@ export const palette = {
   hudText: '#fffbf6',
   hudAccent: '#ff5c8a',
   hudGold: '#ffc04d',
+  signGreen: '#2f8a5a',
 } as const
 
 export type PaletteKey = keyof typeof palette

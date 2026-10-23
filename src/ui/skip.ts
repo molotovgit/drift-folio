@@ -87,7 +87,11 @@ export class SkipOverlay {
     inner.append(close, reason, title, el('p', 'skip__handle', `@${about.handle}`), el('p', 'skip__line', about.line), skills, grid, links)
     wrap.append(inner)
     wrap.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !close.hidden) this.close()
+      if (e.key === 'Escape' && !close.hidden) {
+        // consumed: the project card's window listener must not close as well
+        e.preventDefault()
+        this.close()
+      }
       if (e.key === 'Tab') this.trapFocus(wrap, e)
     })
     document.body.append(wrap)
