@@ -1,9 +1,12 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
+import { surfaceOf as audioSurface } from '../audio/audioMath'
+import { AudioSystem } from '../audio/audioSystem'
 import { ChaseCamera } from '../camera/chaseCamera'
 import { Engine, type GpuTier } from '../core/engine'
 import { idleControls, InputController, type ControlState } from '../core/input'
 import { FixedStepLoop, MAX_FRAME, PHYSICS_STEP } from '../core/loop'
+import { PerfGovernor } from '../core/perfGovernor'
 import { EmberSystem } from '../fx/embers'
 import { LeafSystem } from '../fx/leaves'
 import { SkidMarks } from '../fx/skids'
@@ -15,28 +18,34 @@ import { SkyDome } from '../render/sky'
 import { CardPanel } from '../ui/card'
 import { Hud } from '../ui/hud'
 import { skipOverlay } from '../ui/skip'
+import { TouchControls } from '../ui/touch'
 import { SafeStorage } from '../util/storage'
-import { BoxCarVisual, FdCarVisual, type CarVisual } from '../vehicle/carVisual'
+import { BoxCarVisual, FdCarVisual, HyperVCarVisual, type CarVisual } from '../vehicle/carVisual'
 import { DriftCar, surfaceOf, type Telemetry } from '../vehicle/driftCar'
 import type { Checkpoint } from '../world/checkpoints'
 import { greyboxDressing, PropPlacer } from '../world/dressing'
 import { Greybox } from '../world/greybox'
 import { MountainWorld } from '../world/mountainWorld'
-import { ProjectCorners } from '../world/projectCorners'
+import { DebugHooks } from './debugHooks'
+import { KeySequence } from './easterEggs'
+import { MountainFeatures } from './mountainFeatures'
 import type { GameOptions } from './options'
 import { RouteRuns } from './routeRun'
 import { DriftSession } from './session'
 
 const REAR_WHEELS = [2, 3] as const
 const WIND = new THREE.Vector3(0.9, 0, 0.4)
+/** chassis contacts with these surfaces crash the running score (spec §8) */
+const CRASH_SURFACES = new Set(['rail', 'train'])
 
 /**
- * The whole running game: owns the engine, physics world, car, effects,
- * camera and post pipeline, and drives them from one frame callback.
- * Physics ticks at a fixed 60 Hz; rendering interpolates between ticks.
+ * The running game: owns the engine, physics world, car, effects, camera,
+ * post pipeline, audio and the session rules, and drives them from one frame
+ * callback. Physics ticks at a fixed 60 Hz; rendering interpolates between
+ * ticks. Mountain gameplay features live in MountainFeatures.
  */
 export class Game {
-  private readonly world: RAPIER.World
+  private readonly world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
   private readonly car: DriftCar
   private readonly input = new InputController(window)
   private readonly camera: ChaseCamera
@@ -52,68 +61,106 @@ export class Game {
   /** the playable world: the mountain, or the flat test pad with ?map=pad */
   private readonly mountain: MountainWorld | null
   private readonly pad: Greybox | null
-  private controls: ControlState = idleControls()
+  private readonly features: MountainFeatures | null
   private readonly session: DriftSession
   private readonly hud: Hud
   private readonly cards: CardPanel
-  /** the nine project corners (mountain only) */
-  private readonly corners: ProjectCorners | null
+  /** synthesised engine, tyres, ambience and effects (silent until the first input) */
+  private readonly audio: AudioSystem
+  /** steps quality down on slow devices (null when a tier is forced) */
+  private readonly governor: PerfGovernor | null
   /** Rapier reports chassis contacts above the force threshold here (crash rule) */
   private readonly events = new RAPIER.EventQueue(true)
-  private railHit = false
-  /** hard rail hits since load (debug telemetry) */
-  private railHits = 0
+  private controls: ControlState = idleControls()
+  private crashed = false
+  /**
+   * Seconds of unpaused play (frame times clamped like physics). Timers on the
+   * mountain (gymkhana, train timetable) use it so a pause never counts.
+   */
+  private playClock = 0
+  /** hard rail/train hits since load (debug telemetry) */
+  private crashCount = 0
 
   private constructor(
     private readonly engine: Engine,
-    private readonly visual: CarVisual,
+    private visual: CarVisual,
     quality: QualityTier,
     options: GameOptions,
   ) {
     const { scene } = engine
+    const storage = new SafeStorage('drift-folio:')
+    this.world.timestep = PHYSICS_STEP
+
+    // look
     scene.add(this.sky.mesh)
     this.lighting = new SceneLighting(scene, engine.isMobile)
     this.lamps = new LightPool(scene, engine.isMobile ? 2 : 4)
     this.post = new PostPipeline(engine.renderer, scene, engine.camera, quality)
     if (quality === 'low') engine.setPixelRatioCap(1)
     this.watchReducedMotion()
+    this.governor = options.adaptive ? new PerfGovernor(quality) : null
 
-    this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
-    this.world.timestep = PHYSICS_STEP
+    // world + car
     this.mountain = options.map === 'mountain' ? new MountainWorld(scene, this.world) : null
     this.pad = this.mountain ? null : new Greybox(scene, this.world)
     const start = this.startPoint
     this.car = new DriftCar(this.world, start.pos, start.yaw)
     visual.setHeadlights(quality !== 'low')
     scene.add(visual.root)
+    const mountain = this.mountain
+    this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
 
+    // effects
     this.smoke = new SmokeSystem(scene)
     this.skids = new SkidMarks(scene)
     this.leaves = quality === 'low' ? null : new LeafSystem(scene)
     this.embers = quality === 'high' ? new EmberSystem(scene) : null
-    const mountain = this.mountain
-    this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
+
+    // rules, HUD, sound
     const hudRoot = document.querySelector<HTMLElement>('#hud')!
     this.hud = new Hud(hudRoot)
     // outside the aria-live HUD, so a whole card is not read out on every open
     this.cards = new CardPanel(document.body)
-    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(new SafeStorage('drift-folio:')))
-    this.corners = this.mountain ? new ProjectCorners(scene, this.mountain.roads) : null
+    this.session = new DriftSession(mountain?.roads ?? null, this.hud, new RouteRuns(storage))
+    this.audio = new AudioSystem({ storage })
+    this.session.scoreListener = (e) => this.audio.event(e)
+    const touch = TouchControls.wanted() ? new TouchControls() : null
+    this.features = mountain
+      ? new MountainFeatures({ scene, world: this.world, mountain, storage, hud: this.hud, cards: this.cards, session: this.session, touch, setPaint: (hex) => this.visual.setPaint(hex) })
+      : null
+
+    // input
+    if (touch) this.input.addSource(touch)
+    // browsers only allow audio after a user gesture: unlock on the first input of any kind
+    for (const type of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(type, () => this.audio.unlock(), { capture: true, passive: true })
+    // ↑↑↓↓←→←→BA swaps the FD for a Hyper-V host on wheels
+    new KeySequence(() => this.swapVisual(new HyperVCarVisual(), 'Hyper-V host on wheels')).listen(window)
+
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
   }
 
   /** Initialise everything (renderer, physics wasm, car model, props) and start the loop. */
-  static async start(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>, options: GameOptions): Promise<Game> {
+  static async start(
+    canvas: HTMLCanvasElement,
+    tier: Exclude<GpuTier, 'none'>,
+    options: GameOptions,
+    progress: (fraction: number, what: string) => void = () => {},
+  ): Promise<Game> {
+    progress(0.1, 'Starting the engine…')
     const [engine] = await Promise.all([Engine.create(canvas, tier), RAPIER.init()])
     engine.onContextLost(() => skipOverlay.open('context-lost'))
+    progress(0.3, 'Rolling the FD out…')
     const visual = await FdCarVisual.load().catch((err) => {
       console.warn('FD model failed to load, using the grey-box car', err)
       return new BoxCarVisual()
     })
+    progress(0.45, 'Building the mountain…')
     const game = new Game(engine, visual, options.qualityFor(engine.isMobile), options)
+    progress(0.75, 'Planting maples, hanging lanterns…')
     await game.dress()
-    if (options.debug) game.exposeDebugApi()
+    progress(1, 'Ready')
+    if (options.debug) game.installDebugHooks()
     return game
   }
 
@@ -125,34 +172,35 @@ export class Game {
   /** Place the world's props, then hand the lamp bulbs to the light pool. */
   private async dress(): Promise<void> {
     if (this.mountain) {
-      const mountain = this.mountain
-      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z))])
+      await Promise.all([this.mountain.dress(), this.features?.build()])
       this.lamps.setAnchors([...this.mountain.lamps])
-    } else {
-      const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
-      this.lamps.setAnchors(PropPlacer.anchors(props, 'light_anchor'))
+      return
     }
+    const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
+    this.lamps.setAnchors(PropPlacer.anchors(props, 'light_anchor'))
   }
 
   /** One fixed physics tick. */
   private physicsTick(h: number): void {
     this.car.update(this.controls, h)
+    this.features?.tick(h)
     this.world.step(this.events)
-    // a hard chassis contact with a guard rail is a crash (spec §8)
     this.events.drainContactForceEvents((e) => {
-      if (surfaceOf.get(e.collider1()) === 'rail' || surfaceOf.get(e.collider2()) === 'rail') {
-        if (!this.railHit) this.railHits++
-        this.railHit = true
+      if (!CRASH_SURFACES.has(surfaceOf.get(e.collider1()) ?? '') && !CRASH_SURFACES.has(surfaceOf.get(e.collider2()) ?? '')) return
+      if (!this.crashed) {
+        this.crashCount++
+        this.audio.event({ type: 'crash', value: 0 })
       }
+      this.crashed = true
     })
     this.car.wheels().forEach((w, i) => this.skids.step(i, w.contact ? w.contactPoint : null, w.slide))
   }
 
   /** One rendered frame. */
   private frame(rawDt: number): void {
+    this.adaptQuality(rawDt)
     const dt = Math.min(rawDt, MAX_FRAME)
     const paused = skipOverlay.isOpen
-    const fxDt = paused ? 0 : dt
     this.readControls(dt, paused)
 
     const alpha = paused ? 1 : this.loop.advance(rawDt)
@@ -160,15 +208,7 @@ export class Game {
     const pose = this.car.pose(alpha)
     this.visual.sync(this.car, pose)
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
-    if (!paused) {
-      if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
-      this.session.update({ t, dt, railHit: this.railHit, inShortcutZone: false })
-      this.railHit = false
-      this.mountain?.signposts.update(t)
-      const corner = this.corners?.update(t)
-      if (corner?.opened) this.cards.show(corner.opened)
-      else if (corner?.hinted) this.hud.hint('Drift this corner to open the card')
-    }
+    if (!paused) this.updateRules(t, dt)
 
     this.camera.update(t, dt)
     const camPos = this.engine.camera.position
@@ -176,9 +216,21 @@ export class Game {
     this.lighting.update(t.pos, camPos)
     this.lamps.update(camPos)
     this.mountain?.update(this.engine.camera)
+    this.updateAudio(t)
     // effects after the camera and lamps so billboards/wrapping use this frame's view
-    this.updateEffects(t, fxDt)
+    this.updateEffects(t, paused ? 0 : dt)
     this.post.render(t.speed)
+  }
+
+  /** Checkpoints, mountain features, then scoring (which needs this frame's crash/dirt state). */
+  private updateRules(t: Telemetry, dt: number): void {
+    this.playClock += dt
+    const now = this.playClock
+    if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
+    this.mountain?.signposts.update(t)
+    this.features?.update(t, dt, now)
+    this.session.update({ t, dt, railHit: this.crashed, inShortcutZone: this.features?.inDirt ?? false })
+    this.crashed = false
   }
 
   private readControls(dt: number, paused: boolean): void {
@@ -186,14 +238,53 @@ export class Game {
     // driving inputs are ignored while the overlay is open
     this.controls = paused ? { ...c, throttle: 0, brake: 0, steer: 0, handbrake: false } : c
     if (c.camera) this.camera.toggleMode()
+    if (c.mute) this.hud.hint(this.audio.toggleMute() ? 'Sound off (M)' : 'Sound on (M)')
     if (c.reset) this.resetCar()
   }
 
   /** R (or an automatic stuck/fell reset): back to the last checkpoint passed, facing down the road. */
   private resetCar(): void {
+    this.audio.event({ type: 'reset' })
     const cp = this.mountain?.checkpoints.last ?? this.startPoint
     this.car.resetTo(cp.pos, cp.yaw)
     this.camera.snap()
+  }
+
+  /** Let the governor step quality down on slow devices; give up → text version. */
+  private adaptQuality(rawDt: number): void {
+    const action = this.governor?.frame(rawDt)
+    if (!action) return
+    if (action.type === 'give-up') {
+      skipOverlay.open('slow')
+      return
+    }
+    this.post.setTier(action.tier)
+    if (action.tier === 'low') {
+      this.engine.setPixelRatioCap(1)
+      this.visual.setHeadlights(false)
+    }
+  }
+
+  /** Replace the car's look (easter egg); physics is unchanged. */
+  private swapVisual(next: CarVisual, hint: string): void {
+    this.engine.scene.remove(this.visual.root)
+    this.visual = next
+    next.setHeadlights(this.post.tier !== 'low') // the low tier runs without headlights
+    this.engine.scene.add(next.root)
+    this.hud.hint(hint)
+  }
+
+  private updateAudio(t: Telemetry): void {
+    this.audio.update({
+      speed: t.speed,
+      throttle: this.controls.throttle,
+      slipDeg: t.slipDeg,
+      drifting: t.drifting,
+      wheelsOnGround: t.wheelsOnGround,
+      surface: audioSurface(t),
+      horn: this.controls.horn,
+      zone: this.session.route === 'town' ? 'town' : 'mountain',
+    })
   }
 
   private updateEffects(t: Telemetry, dt: number): void {
@@ -218,64 +309,22 @@ export class Game {
     mq.addEventListener('change', (e) => this.post.setReducedMotion(e.matches))
   }
 
-  /** `window.__drift` for Playwright tests (only with ?debug). */
-  private exposeDebugApi(): void {
-    const { camera, renderer } = this.engine
-    ;(window as unknown as { __drift: unknown }).__drift = {
-      telemetry: () => this.car.telemetry(),
-      wheels: () => this.car.wheels(),
-      cameraY: () => camera.position.y - this.car.telemetry().pos.y,
-      skidCount: () => this.skids.buffer.count,
-      smokeLive: () => this.smoke.live,
-      activeLamps: () => this.lamps.active.length,
-      quality: () => this.post.tier,
-      speedFx: (s: number) => this.post.effectAt(s),
-      carModel: () => this.visual.root.getObjectByName('body') !== undefined,
-      renderInfo: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
-      drawnInstances: () => this.mountain?.drawnInstances ?? 0,
-      /** jump to a road sample facing along it (screenshots/tests); returns false without a mountain */
-      teleport: (edgeId: string, frac: number) => {
-        const e = this.mountain?.roads.edge(edgeId)
-        if (!e) return false
-        const i = Math.round((e.points.length - 1) * frac)
-        const t = e.tangent(i)
-        this.car.resetTo(e.points[i], Math.atan2(t.x, t.y))
-        this.camera.snap()
-        return true
-      },
-      /** jump to a road sample index (screenshots/tests) */
-      teleportIndex: (edgeId: string, index: number) => {
-        const e = this.mountain?.roads.edge(edgeId)
-        if (!e) return false
-        const i = Math.max(0, Math.min(e.points.length - 1, index))
-        const t = e.tangent(i)
-        this.car.resetTo(e.points[i], Math.atan2(t.x, t.y))
-        this.camera.snap()
-        return true
-      },
-      /** first hairpin apex of an edge as a 0..1 fraction (or -1) */
-      hairpinFrac: (edgeId: string) => {
-        const e = this.mountain?.roads.edge(edgeId)
-        const i = e?.hairpinApexes()[0]
-        return e && i !== undefined ? i / (e.points.length - 1) : -1
-      },
-      score: () => this.session.score.state(),
-      openCard: () => this.cards.openId,
-      showCard: (id: string) => this.cards.show(id as never),
-      corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index, clip: s.clip, turn: s.turn })) ?? [],
-      route: () => this.session.route,
-      railHits: () => this.railHits,
-      /** drop the car at (x, z) on the ground, facing `yaw` */
-      teleportTo: (x: number, z: number, yaw = 0) => {
-        const y = this.mountain ? this.mountain.heightAt(x, z) + 0.15 : 0
-        this.car.resetTo({ x, y, z }, yaw)
-        this.camera.snap()
-      },
-      /** give the car `speed` m/s along its heading turned by `slipDeg` (left positive): an instant slide */
-      launch: (speed: number, slipDeg = 0) => {
-        const yaw = this.car.telemetry().yaw + (slipDeg * Math.PI) / 180
-        this.car.body.setLinvel({ x: Math.sin(yaw) * speed, y: 0, z: Math.cos(yaw) * speed }, true)
-      },
-    }
+  private installDebugHooks(): void {
+    DebugHooks.install({
+      engine: this.engine,
+      car: this.car,
+      camera: this.camera,
+      visual: () => this.visual,
+      skids: this.skids,
+      smoke: this.smoke,
+      lamps: this.lamps,
+      post: this.post,
+      session: this.session,
+      cards: this.cards,
+      audio: this.audio,
+      mountain: this.mountain,
+      features: this.features,
+      crashCount: () => this.crashCount,
+    })
   }
 }

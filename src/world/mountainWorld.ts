@@ -12,6 +12,8 @@ import { Signposts } from './signposts'
 import { TerrainHeights } from './terrain'
 import { TerrainCollider } from './terrainCollider'
 import { TerrainMesh } from './terrainMesh'
+import { TOWN_LOTS } from './townLayout'
+import { allChannels, brokenRailChute, PEAK } from './shortcutLayout'
 
 /**
  * The playable mountain (M3): roads, carved terrain, guard rails, lamps,
@@ -36,12 +38,15 @@ export class MountainWorld {
     private readonly scene: THREE.Scene,
     world: RAPIER.World,
   ) {
-    this.terrain = new TerrainHeights(this.roads)
+    const peakLot = { name: 'peak' as const, x: PEAK.x, z: PEAK.z, r: PEAK.r, y: PEAK.y }
+    this.terrain = new TerrainHeights(this.roads, [...TOWN_LOTS, peakLot], allChannels(this.roads))
     this.terrainCollider = new TerrainCollider(world, this.terrain)
     scene.add(new TerrainMesh(this.terrain).mesh)
     scene.add(new RoadMesh(this.roads, world).group)
     this.signposts = new Signposts(this.roads)
-    this.rails = new GuardRails(this.roads, world)
+    // S3: a deliberate break in the rail at the top of the broken-rail chute
+    const chuteTop = brokenRailChute(this.roads).points[0]
+    this.rails = new GuardRails(this.roads, world, [{ x: chuteTop.x, z: chuteTop.z, r: 10 }])
     scene.add(this.rails.group)
 
     const summit = this.roads.edge('summit')

@@ -11,7 +11,7 @@ html, body { height: 100%; margin: 0; overflow: hidden; background: var(--sky-to
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none;
   background: linear-gradient(180deg, var(--sky-top), var(--sky-mid) 55%, var(--sky-horizon)) }
 #hud { position: fixed; inset: 0; pointer-events: none; font-family: var(--font-display) }
-.skip-link { position: fixed; z-index: 30; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+.skip-link { position: fixed; z-index: 45; /* above the loading screen: the text version is always one tap away */ top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
   font: 600 15px/1 var(--font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--text);
   background: var(--panel); border: 1px solid var(--panel-line); border-radius: 999px; padding: 9px 14px; cursor: pointer }
 .skip-link:hover, .skip-link:focus-visible { color: var(--gold); border-color: var(--gold); outline: none }
@@ -37,3 +37,18 @@ html, body { height: 100%; margin: 0; overflow: hidden; background: var(--sky-to
 .card__go:focus-visible { outline: 2px solid var(--text); outline-offset: 2px }
 .skip__links { display: flex; gap: 16px; margin: 8px 0 0 } .skip__links a { color: var(--gold) }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
+
+/* Loading screen (index.html #loading) */
+.loading { position: fixed; inset: 0; z-index: 35; display: grid; place-items: center; background: linear-gradient(180deg, var(--sky-top), var(--sky-mid) 60%, var(--sky-horizon)); transition: opacity .5s }
+.loading.is-done { opacity: 0; pointer-events: none }
+/* `display: grid` above would otherwise beat the hidden attribute set after the fade */
+.loading[hidden] { display: none }
+.loading__inner { width: min(560px, calc(100% - 32px)); display: grid; gap: 10px }
+.loading__eyebrow { margin: 0; color: var(--gold); font: 600 14px/1 var(--font-display); letter-spacing: .12em; text-transform: uppercase }
+.loading__title { margin: 0; font: italic 800 clamp(48px, 12vw, 96px)/.9 var(--font-display) }
+.loading__line { margin: 0; color: var(--text-soft); line-height: 1.45 }
+.loading__track { height: 6px; border-radius: 3px; background: rgba(255, 251, 246, .18); overflow: hidden; margin-top: 8px }
+.loading__bar { height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); transition: transform .3s }
+.loading__label { margin: 0; font: 600 14px/1 var(--font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--text-soft) }
+.loading__keys { margin: 8px 0 0; font: 600 13px/1.5 var(--font-display); letter-spacing: .04em; color: var(--text-soft) }
+@media (pointer: coarse) { .loading__keys { display: none } }

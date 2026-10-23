@@ -11,7 +11,9 @@ export interface ControlState {
   /** one-shot buttons: true only on the frame they were pressed */
   reset: boolean
   camera: boolean
+  /** held while the horn key is down */
   horn: boolean
+  /** one-shot */
   mute: boolean
 }
 

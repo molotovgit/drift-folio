@@ -1,5 +1,7 @@
 import { clamp, lerp } from '../core/math'
 import type { RoadNetwork } from './roadNetwork'
+import type { Channel } from './shortcutLayout'
+import type { FlatLot } from './townLayout'
 
 /** Smoothstep 0→1 between edge0 and edge1. */
 const smooth = (e0: number, e1: number, x: number) => {
@@ -63,6 +65,8 @@ export const ROAD_LIFT = 0.12
 /** terrain is carved flat this far from the road centreline, then blends out */
 const CARVE_FLAT = 10
 const CARVE_BLEND = 28
+/** channel banks blend into the hillside over this distance */
+const CHANNEL_BLEND = 16
 /** coarse road samples used for the smooth "valley" height field */
 const COARSE_STEP = 5
 
@@ -78,8 +82,16 @@ export class TerrainHeights {
   /** (cells+1)² heights, row-major: index = iz * (cells+1) + ix */
   readonly heights: Float32Array
   private readonly noise = new ValueNoise(7)
+  private readonly channels: { c: Channel; box: ChannelBox }[]
 
-  constructor(private readonly roads: RoadNetwork) {
+  constructor(
+    private readonly roads: RoadNetwork,
+    /** paved lots (town) the ground is flattened under */
+    private readonly lots: readonly FlatLot[] = [],
+    /** dirt shortcuts and the railway bed, carved to their height profile */
+    channels: readonly Channel[] = [],
+  ) {
+    this.channels = channels.map((c) => ({ c, box: ChannelBox.of(c) }))
     const n = this.cells + 1
     this.heights = new Float32Array(n * n)
     const base = this.baseGrid()
@@ -121,11 +133,44 @@ export class TerrainHeights {
     const swell = (this.noise.fbm(x / 260, z / 260, 3) - 0.35) * 70
     const ridges = (this.noise.fbm(x / 70, z / 70, 4) - 0.5) * 22
     const natural = base + (swell + ridges) * away
-    if (!hit) return natural
+    const withLots = this.carveChannels(x, z, this.flattenLots(x, z, natural))
+    if (!hit) return withLots
     // carve: flat under the nearest road, blending out to the natural slope
-    let h = lerp(hit.point.y - ROAD_LIFT, natural, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
+    let h = lerp(hit.point.y - ROAD_LIFT, withLots, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
     // never let the ground rise through any road surface (junctions, stacked switchbacks)
     for (const other of hits) if (other.dist < CARVE_FLAT) h = Math.min(h, other.point.y - ROAD_LIFT)
+    return h
+  }
+
+  /** Flatten the ground under each lot (just below its paved top), blending out over 25 m. */
+  private flattenLots(x: number, z: number, h: number): number {
+    for (const l of this.lots) {
+      const d = Math.hypot(x - l.x, z - l.z)
+      h = lerp(l.y - ROAD_LIFT, h, smooth(l.r + 1, l.r + 25, d))
+    }
+    return h
+  }
+
+  /** Carve each channel: flat floor at its profile height, blending into the hillside. */
+  private carveChannels(x: number, z: number, h: number): number {
+    for (const { c, box } of this.channels) {
+      if (!box.near(x, z)) continue
+      let best = Infinity
+      let y = 0
+      for (let i = 0; i < c.points.length - 1; i++) {
+        const a = c.points[i]
+        const b = c.points[i + 1]
+        const dx = b.x - a.x
+        const dz = b.z - a.z
+        const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz || 1), 0, 1)
+        const d = Math.hypot(a.x + dx * t - x, a.z + dz * t - z)
+        if (d < best) {
+          best = d
+          y = a.y + (b.y - a.y) * t
+        }
+      }
+      h = lerp(y - ROAD_LIFT, h, smooth(c.width / 2, c.width / 2 + CHANNEL_BLEND, best))
+    }
     return h
   }
 
@@ -211,5 +256,26 @@ class CoarseSamples {
 
   private key(cx: number, cz: number): number {
     return (cx + 4096) * 8192 + (cz + 4096)
+  }
+}
+
+/** Axis-aligned bounds of a channel plus its blend margin (cheap rejection per vertex). */
+class ChannelBox {
+  private constructor(
+    private readonly minX: number,
+    private readonly maxX: number,
+    private readonly minZ: number,
+    private readonly maxZ: number,
+  ) {}
+
+  static of(c: Channel): ChannelBox {
+    const m = c.width / 2 + CHANNEL_BLEND
+    const xs = c.points.map((p) => p.x)
+    const zs = c.points.map((p) => p.z)
+    return new ChannelBox(Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m)
+  }
+
+  near(x: number, z: number): boolean {
+    return x >= this.minX && x <= this.maxX && z >= this.minZ && z <= this.maxZ
   }
 }

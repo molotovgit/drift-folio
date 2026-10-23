@@ -1,0 +1,14 @@
+{
+  "handlingHash": "0bc8afadc31079",
+  "scriptedRunS": 51.817,
+  "ghostTimeS": 56.998,
+  "slowdown": 1.1,
+  "samples": 1037,
+  "stayedOnRoad": true,
+  "maxOffRoadS": 0,
+  "edges": [
+    "systems-a",
+    "systems-b",
+    "systems-c"
+  ]
+}

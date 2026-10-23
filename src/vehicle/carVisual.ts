@@ -43,6 +43,18 @@ export abstract class CarVisual {
     })
   }
 
+  /** Repaint the body (the secret car's livery). Clones the paint material so other cars keep theirs. */
+  setPaint(hex: string): void {
+    this.chassis.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      const mat = mesh.material as THREE.Material & { color?: THREE.Color }
+      if (!mesh.isMesh || mat?.name !== 'paint') return
+      const repaint = mat.clone() as THREE.Material & { color: THREE.Color }
+      repaint.color = new THREE.Color(hex)
+      mesh.material = repaint
+    })
+  }
+
   setHeadlights(on: boolean): void {
     for (const b of this.beams) b.visible = on
   }
@@ -101,6 +113,27 @@ export class BoxCarVisual extends CarVisual {
     shell.position.y = 0.5
     shell.castShadow = true
     body.add(shell)
+    const wheelGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.23, 14)
+    wheelGeo.rotateZ(Math.PI / 2)
+    const wheelMat = new THREE.MeshToonMaterial({ color: palette.ink })
+    super(body, [0, 1, 2, 3].map(() => new THREE.Mesh(wheelGeo, wheelMat)))
+  }
+}
+
+/** Konami-code easter egg: a Hyper-V host on wheels (a server box with blinking LEDs). */
+export class HyperVCarVisual extends CarVisual {
+  constructor() {
+    const body = new THREE.Group()
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.1, 3.6), new THREE.MeshToonMaterial({ color: '#2a2633' }))
+    box.position.y = 0.75
+    box.castShadow = true
+    body.add(box)
+    const led = new THREE.MeshBasicMaterial({ color: '#4ff0ff' })
+    for (let i = 0; i < 6; i++) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.04, 0.02), led)
+      strip.position.set(0, 0.45 + i * 0.12, -1.81) // the rear face, where the chase camera looks
+      body.add(strip)
+    }
     const wheelGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.23, 14)
     wheelGeo.rotateZ(Math.PI / 2)
     const wheelMat = new THREE.MeshToonMaterial({ color: palette.ink })

@@ -1,5 +1,6 @@
 import { projects, routeNames, type CardId, type ProjectCard } from '../content/projects'
 import '../styles/card.css'
+import { SafeUrl } from '../util/safeUrl'
 import { skipOverlay } from './skip'
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
@@ -9,8 +10,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   return e
 }
 
-/** Focused element that handles Enter itself (so the panel must not). */
-function isControl(e: Element | null): boolean {
+/** Focused element that handles Enter itself (so window-level Enter handlers must not). */
+export function isControl(e: Element | null): boolean {
   if (!e) return false
   return e.matches('a[href], button, input, select, textarea, [contenteditable=""], [contenteditable="true"]')
 }
@@ -95,7 +96,7 @@ export class CardPanel {
     this.blurb.textContent = p.blurb
     this.chips.replaceChildren(...p.stack.map((s) => el('li', '', s)))
     // only GitHub links are ever opened from a card
-    this.url = p.public && p.url?.startsWith('https://github.com/') ? p.url : null
+    this.url = p.public ? SafeUrl.https(p.url, 'https://github.com/') : null
     if (this.url) this.link.href = this.url
     else this.link.removeAttribute('href')
     this.link.hidden = !this.url
