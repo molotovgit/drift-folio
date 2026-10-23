@@ -12,6 +12,7 @@ import { Signposts } from './signposts'
 import { TerrainHeights } from './terrain'
 import { TerrainCollider } from './terrainCollider'
 import { TerrainMesh } from './terrainMesh'
+import { TOWN_LOTS } from './townLayout'
 
 /**
  * The playable mountain (M3): roads, carved terrain, guard rails, lamps,
@@ -36,7 +37,7 @@ export class MountainWorld {
     private readonly scene: THREE.Scene,
     world: RAPIER.World,
   ) {
-    this.terrain = new TerrainHeights(this.roads)
+    this.terrain = new TerrainHeights(this.roads, TOWN_LOTS)
     this.terrainCollider = new TerrainCollider(world, this.terrain)
     scene.add(new TerrainMesh(this.terrain).mesh)
     scene.add(new RoadMesh(this.roads, world).group)

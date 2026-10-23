@@ -1,5 +1,6 @@
 import { clamp, lerp } from '../core/math'
 import type { RoadNetwork } from './roadNetwork'
+import type { FlatLot } from './townLayout'
 
 /** Smoothstep 0→1 between edge0 and edge1. */
 const smooth = (e0: number, e1: number, x: number) => {
@@ -79,7 +80,11 @@ export class TerrainHeights {
   readonly heights: Float32Array
   private readonly noise = new ValueNoise(7)
 
-  constructor(private readonly roads: RoadNetwork) {
+  constructor(
+    private readonly roads: RoadNetwork,
+    /** paved lots (town) the ground is flattened under */
+    private readonly lots: readonly FlatLot[] = [],
+  ) {
     const n = this.cells + 1
     this.heights = new Float32Array(n * n)
     const base = this.baseGrid()
@@ -121,11 +126,21 @@ export class TerrainHeights {
     const swell = (this.noise.fbm(x / 260, z / 260, 3) - 0.35) * 70
     const ridges = (this.noise.fbm(x / 70, z / 70, 4) - 0.5) * 22
     const natural = base + (swell + ridges) * away
-    if (!hit) return natural
+    const withLots = this.flattenLots(x, z, natural)
+    if (!hit) return withLots
     // carve: flat under the nearest road, blending out to the natural slope
-    let h = lerp(hit.point.y - ROAD_LIFT, natural, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
+    let h = lerp(hit.point.y - ROAD_LIFT, withLots, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
     // never let the ground rise through any road surface (junctions, stacked switchbacks)
     for (const other of hits) if (other.dist < CARVE_FLAT) h = Math.min(h, other.point.y - ROAD_LIFT)
+    return h
+  }
+
+  /** Flatten the ground under each lot (just below its paved top), blending out over 25 m. */
+  private flattenLots(x: number, z: number, h: number): number {
+    for (const l of this.lots) {
+      const d = Math.hypot(x - l.x, z - l.z)
+      h = lerp(l.y - ROAD_LIFT, h, smooth(l.r + 1, l.r + 25, d))
+    }
     return h
   }
 

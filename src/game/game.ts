@@ -23,6 +23,8 @@ import { greyboxDressing, PropPlacer } from '../world/dressing'
 import { Greybox } from '../world/greybox'
 import { MountainWorld } from '../world/mountainWorld'
 import { ProjectCorners } from '../world/projectCorners'
+import { BaseTown } from '../world/baseTown'
+import { formatTime } from './session'
 import type { GameOptions } from './options'
 import { RouteRuns } from './routeRun'
 import { DriftSession } from './session'
@@ -58,6 +60,9 @@ export class Game {
   private readonly cards: CardPanel
   /** the nine project corners (mountain only) */
   private readonly corners: ProjectCorners | null
+  /** the base town (mountain only) and the link pad the car is parked on */
+  private readonly town: BaseTown | null
+  private padUrl: string | null = null
   /** Rapier reports chassis contacts above the force threshold here (crash rule) */
   private readonly events = new RAPIER.EventQueue(true)
   private railHit = false
@@ -97,7 +102,13 @@ export class Game {
     this.hud = new Hud(hudRoot)
     // outside the aria-live HUD, so a whole card is not read out on every open
     this.cards = new CardPanel(document.body)
-    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(new SafeStorage('drift-folio:')))
+    const storage = new SafeStorage('drift-folio:')
+    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(storage))
+    this.town = this.mountain ? new BaseTown(scene, this.world, storage) : null
+    // opening a link needs a real key press (popup blockers), so pads ask for Enter
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && this.padUrl && !skipOverlay.isOpen) window.open(this.padUrl, '_blank', 'noopener')
+    })
     this.corners = this.mountain ? new ProjectCorners(scene, this.mountain.roads) : null
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
@@ -126,7 +137,7 @@ export class Game {
   private async dress(): Promise<void> {
     if (this.mountain) {
       const mountain = this.mountain
-      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z))])
+      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z)), this.town?.build()])
       this.lamps.setAnchors([...this.mountain.lamps])
     } else {
       const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
@@ -165,6 +176,7 @@ export class Game {
       this.session.update({ t, dt, railHit: this.railHit, inShortcutZone: false })
       this.railHit = false
       this.mountain?.signposts.update(t)
+      if (this.town) this.handleTown(t)
       const corner = this.corners?.update(t)
       if (corner?.opened) this.cards.show(corner.opened)
       else if (corner?.hinted) this.hud.hint('Drift this corner to open the card')
@@ -179,6 +191,19 @@ export class Game {
     // effects after the camera and lamps so billboards/wrapping use this frame's view
     this.updateEffects(t, fxDt)
     this.post.render(t.speed)
+  }
+
+  /** Town events → HUD (pads, lots, gymkhana). */
+  private handleTown(t: Telemetry): void {
+    const ev = this.town!.update(t.pos, performance.now() / 1000)
+    const url = ev.pad?.url ?? null
+    if (url && url !== this.padUrl) this.hud.hint(`Press Enter to open ${ev.pad!.label} ↗`)
+    this.padUrl = url
+    if (ev.enteredLot) this.hud.routeBanner(ev.enteredLot === 'plaza' ? 'PIT GARAGE' : ev.enteredLot.toUpperCase())
+    const g = ev.gymkhana
+    if (g?.type === 'start') this.hud.hint('Gymkhana: go!')
+    else if (g?.type === 'cone') this.hud.hint(`Cone +${g.penalty} s`)
+    else if (g?.type === 'finish') this.hud.hint(`Gymkhana ${formatTime(g.time)}${g.best ? ' · new best' : ''}`)
   }
 
   private readControls(dt: number, paused: boolean): void {
@@ -243,6 +268,12 @@ export class Game {
         this.camera.snap()
         return true
       },
+      /** jump to world (x, z) on the ground facing yaw (screenshots/tests) */
+      teleportTo: (x: number, z: number, yaw = 0) => {
+        const y = this.mountain ? this.mountain.heightAt(x, z) + 0.15 : 0
+        this.car.resetTo({ x, y, z }, yaw)
+        this.camera.snap()
+      },
       /** jump to a road sample index (screenshots/tests) */
       teleportIndex: (edgeId: string, index: number) => {
         const e = this.mountain?.roads.edge(edgeId)
@@ -262,6 +293,8 @@ export class Game {
       score: () => this.session.score.state(),
       openCard: () => this.cards.openId,
       showCard: (id: string) => this.cards.show(id as never),
+      padUrl: () => this.padUrl,
+      gymkhanaBest: () => this.town?.gymkhana.best ?? null,
       corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index, clip: s.clip, turn: s.turn })) ?? [],
       route: () => this.session.route,
       railHits: () => this.railHits,
