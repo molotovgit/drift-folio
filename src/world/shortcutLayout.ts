@@ -119,7 +119,10 @@ export function railCrossings(roads: RoadNetwork): RailCrossing[] {
       const b = e.points[i]
       if ((a.z - RAIL_Z) * (b.z - RAIL_Z) > 0 || a.z === b.z) continue
       const t = (RAIL_Z - a.z) / (b.z - a.z)
-      out.push({ edgeId: e.id, x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+      const x = a.x + (b.x - a.x) * t
+      // a road crossing the line beyond the track's ends (another region) is no level crossing
+      if (x < RAIL_X.from || x > RAIL_X.to) continue
+      out.push({ edgeId: e.id, x, y: a.y + (b.y - a.y) * t })
     }
   }
   return out.sort((p, q) => p.x - q.x)

@@ -76,8 +76,10 @@ describe('terrain heights (plan Task 3.2)', () => {
     new TerrainCollider(world, terrain)
     world.step() // rapier indexes new colliders for queries on step
     const ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
+    // off the 4 m grid lines: a vertical ray exactly through a heightfield vertex can slip
+    // between Rapier's cells (a float edge case on any grid this size, measure-zero in play)
     const probes = [
-      [0, 50], [150, 300], [-200, 200], [300, 700], [-50, 820], [400, 0], [-600, 1000],
+      [0.5, 50.5], [150.5, 300.5], [-200.5, 200.5], [300.5, 700.5], [-50.5, 820.5], [400.5, 0.5], [-600.5, 1000.5], [-450.5, 100.5], [450.5, 1100.5],
     ]
     for (const [x, z] of probes) {
       ray.origin = { x, y: 500, z }

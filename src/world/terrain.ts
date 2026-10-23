@@ -58,9 +58,14 @@ export interface TerrainBounds {
   size: number
 }
 
-export const TERRAIN_BOUNDS: TerrainBounds = { minX: -690, minZ: -300, size: 1420 }
-/** grid cells per side (vertices = cells + 1) */
-export const TERRAIN_CELLS = 355
+/**
+ * Covers the mountain plus Lantern Valley (−X) and Neon Ward (+Z). Grown from
+ * the mountain-only square in whole 16 m steps (4 m cells × the base grid's
+ * 4-cell step), so every mountain vertex and base sample sits where it did.
+ */
+export const TERRAIN_BOUNDS: TerrainBounds = { minX: -770, minZ: -300, size: 1648 }
+/** grid cells per side (vertices = cells + 1): 4 m cells */
+export const TERRAIN_CELLS = 412
 /** road surface sits this far above the carved terrain under it */
 export const ROAD_LIFT = 0.12
 /** terrain is carved flat this far from the road centreline, then blends out */

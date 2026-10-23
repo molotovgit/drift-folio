@@ -1,9 +1,11 @@
+import { REGION_EDGE_DEFS, REGION_NODE_DEFS } from './regionLayout'
+
 /**
  * The mountain's road layout (spec §6, sketch v0.4) as plain data.
  * World axes: the car leaves the summit heading +Z (downhill); +X is the
  * driver's left. Heights are metres (summit 0, town about -120).
  */
-export type RoadRoute = 'summit' | 'automation' | 'platform' | 'systems' | 'systems-branch' | 'town' | 'return'
+export type RoadRoute = 'summit' | 'automation' | 'platform' | 'systems' | 'systems-branch' | 'town' | 'return' | 'temple' | 'city'
 
 export interface NodeDef {
   id: string
@@ -39,6 +41,8 @@ export const NODE_DEFS: readonly NodeDef[] = [
   N('townP', 0, -117, 840),
   N('townS', -150, -116, 820),
   N('townW', 230, -118, 880),
+  // Lantern Valley and Neon Ward (regionLayout.ts)
+  ...REGION_NODE_DEFS,
 ]
 
 export const EDGE_DEFS: readonly EdgeDef[] = [
@@ -66,6 +70,8 @@ export const EDGE_DEFS: readonly EdgeDef[] = [
   E('return', 'townW', 'summit', 'return', [
     [330, 860], [400, 760], [420, 620], [400, 480], [360, 340], [300, 210], [230, 100], [150, 10], [70, -50], [20, -60],
   ]),
+  // Lantern Valley and Neon Ward (regionLayout.ts)
+  ...REGION_EDGE_DEFS,
 ]
 
 /** The descent a player drives on each themed route, Fork 1 → town (spec §6: 600–1000 m). */
