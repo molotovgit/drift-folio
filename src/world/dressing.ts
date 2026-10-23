@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu'
 import { loadModel } from '../render/loadModel'
-import { palette } from '../render/palette'
 
 export interface Placement {
   model: string
@@ -51,13 +50,6 @@ export async function placeModels(scene: THREE.Scene, items: Placement[]): Promi
   }
   scene.add(group)
   return group
-}
-
-/** Lamp light: a warm point light at a lamp's bulb (only the nearest few are enabled at a time). */
-export function lampLight(): THREE.PointLight {
-  const l = new THREE.PointLight(palette.lampGlow, 40, 22, 1.6)
-  l.castShadow = false
-  return l
 }
 
 /** M2 style-check dressing for the grey-box pad. */

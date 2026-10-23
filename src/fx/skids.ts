@@ -58,7 +58,7 @@ export function createSkids(scene: THREE.Scene, capacity = SKID_CAPACITY) {
   geo.setIndex(new THREE.BufferAttribute(idx, 1))
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6)
 
-  const mat = new THREE.MeshBasicNodeMaterial({ color: '#150d1c', transparent: true, depthWrite: false })
+  const mat = new THREE.MeshBasicNodeMaterial({ color: '#07030a', transparent: true, depthWrite: false })
   mat.opacityNode = attribute('skidAlpha', 'float')
   mat.polygonOffset = true
   mat.polygonOffsetFactor = -2
@@ -69,6 +69,8 @@ export function createSkids(scene: THREE.Scene, capacity = SKID_CAPACITY) {
 
   const last: (Vec3 | null)[] = [null, null, null, null]
   let dirty = false
+  let lo = Infinity
+  let hi = -1
 
   return {
     buffer: buf,
@@ -80,16 +82,26 @@ export function createSkids(scene: THREE.Scene, capacity = SKID_CAPACITY) {
       }
       const prev = last[wheel]
       if (prev && Math.hypot(contact.x - prev.x, contact.z - prev.z) > 0.25) {
-        buf.add(prev, contact, 0.11, Math.min(0.75, 0.25 + slide * 0.55))
+        const slot = buf.add(prev, contact, 0.11, Math.min(0.85, 0.35 + slide * 0.55))
+        lo = Math.min(lo, slot)
+        hi = Math.max(hi, slot)
         last[wheel] = { ...contact }
         dirty = true
       } else if (!prev) last[wheel] = { ...contact }
     },
     flush() {
       if (!dirty) return
+      // upload only the slots written since the last flush (ring wrap → whole range)
+      posAttr.clearUpdateRanges()
+      alphaAttr.clearUpdateRanges()
+      posAttr.addUpdateRange(lo * 12, (hi - lo + 1) * 12)
+      alphaAttr.addUpdateRange(lo * 4, (hi - lo + 1) * 4)
       posAttr.needsUpdate = true
       alphaAttr.needsUpdate = true
+      geo.setDrawRange(0, buf.count * 6)
       dirty = false
+      lo = Infinity
+      hi = -1
     },
   }
 }

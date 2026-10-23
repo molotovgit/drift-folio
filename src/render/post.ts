@@ -21,10 +21,16 @@ export interface Post {
   readonly tier: QualityTier
 }
 
+export const QUALITY_TIERS: readonly QualityTier[] = ['high', 'mid', 'low']
+
+export function parseTier(v: string | null): QualityTier | null {
+  return v && (QUALITY_TIERS as readonly string[]).includes(v) ? (v as QualityTier) : null
+}
+
 export function createPost(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.Camera, initial: QualityTier = 'high'): Post {
   const pipeline = new THREE.RenderPipeline(renderer)
   const fx = uniform(0) // 0..1 speed effects strength
-  let outlineThickness = 0.0028
+  let outlineThickness = 0.006
   let tier: QualityTier = initial
   let reducedMotion = false
 
@@ -84,7 +90,7 @@ export function createPost(renderer: THREE.WebGPURenderer, scene: THREE.Scene, c
     setTier(t: QualityTier) {
       if (t === tier) return
       tier = t
-      outlineThickness = t === 'low' ? 0.0022 : 0.0028
+      outlineThickness = t === 'low' ? 0.0045 : 0.006
       pipeline.outputNode = build(t)
       pipeline.needsUpdate = true
     },

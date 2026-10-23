@@ -14,7 +14,7 @@ export const carConfig = {
   springK: 36000,
   damperC: 3600,
   /** maximum front wheel lock */
-  maxSteerDeg: 38,
+  maxSteerDeg: 45,
   /** floor for speed-limited lock is a quarter of this */
   highSpeedSteerDeg: 14,
   /** full steer input asks for this share of the tyres' grip limit when not drifting */
@@ -34,9 +34,11 @@ export const carConfig = {
   peakSlipDeg: 8,
   frontSlide: 0.78,
   rearSlide: 0.62,
-  counterSteer: 0.85,
+  counterSteer: 0.7,
   /** drift assist: slip angle it holds a drift at */
   driftTargetDeg: 30,
+  /** how far the driver's steer can move the held drift angle (± degrees around the target) */
+  driftSteerRangeDeg: 18,
   /** drift assist proportional gain, N·m per rad of slip error */
   driftHoldGain: 14000,
   /** drift assist damping, N·m per rad/s of slip change */

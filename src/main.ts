@@ -9,13 +9,15 @@ import { createLeaves } from './fx/leaves'
 import { createSkids } from './fx/skids'
 import { createSmoke, smokeGate } from './fx/smoke'
 import { palette } from './render/palette'
-import { createPost, type QualityTier } from './render/post'
+import { createPost, parseTier, type QualityTier } from './render/post'
+import { createLightPool } from './render/lightPool'
+import { createEmbers } from './fx/embers'
 import { createSky } from './render/sky'
 import { isSkipOpen, openSkipOverlay } from './ui/skip'
 import { createBoxCarVisual, loadCarVisual, type CarVisual } from './vehicle/carVisual'
 import { createDriftCar } from './vehicle/driftCar'
 import { buildGreybox } from './world/greybox'
-import { greyboxDressing, lampLight, placeModels } from './world/dressing'
+import { greyboxDressing, placeModels } from './world/dressing'
 import { groundHeight } from './world/ground'
 
 const params = new URLSearchParams(location.search)
@@ -51,9 +53,15 @@ async function boot() {
   fill.position.set(30, 20, -40)
   scene.add(fill)
 
-  const qualityParam = params.get('quality') as QualityTier | null
+  const qualityParam = parseTier(params.get('quality'))
   const quality: QualityTier = qualityParam ?? (engine.isMobile ? 'mid' : 'high')
   const post = createPost(renderer, scene, camera, quality)
+  if (quality === 'low') engine.setPixelRatioCap(1)
+  // rim light from behind the car (moved each frame opposite the camera)
+  const rim = new THREE.DirectionalLight(palette.skyHorizon, 1.3)
+  scene.add(rim, rim.target)
+  const lamps = createLightPool(scene, engine.isMobile ? 2 : 4)
+  const embers = quality === 'high' ? createEmbers(scene) : null
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)')
   post.setReducedMotion(reduceMotion.matches)
   reduceMotion.addEventListener('change', (e) => post.setReducedMotion(e.matches))
@@ -63,14 +71,14 @@ async function boot() {
   world.timestep = PHYSICS_STEP
   const greybox = buildGreybox(scene, world)
   const dressing = placeModels(scene, greyboxDressing())
-  // warm lamp lights at each lamp head (lamp arm reaches toward -X in model space)
+  // lamp bulbs feed the fixed light pool (lights exist from boot, so no shader recompiles)
   dressing.then((g) => {
+    g.updateMatrixWorld(true)
+    const anchors: THREE.Vector3[] = []
     g.traverse((o) => {
-      if (o.name === 'light_anchor') {
-        const l = lampLight()
-        o.add(l)
-      }
+      if (o.name === 'light_anchor') anchors.push(o.getWorldPosition(new THREE.Vector3()))
     })
+    lamps.setAnchors(anchors)
   })
   const car = createDriftCar(world, { x: 0, y: 0, z: 0 }, 0)
   let visual: CarVisual
@@ -83,7 +91,7 @@ async function boot() {
   visual.setHeadlights(quality !== 'low')
   scene.add(visual.root)
 
-  const smoke = createSmoke(scene, quality === 'high' ? 260 : 140)
+  const smoke = createSmoke(scene)
   const skids = createSkids(scene)
   const leaves = quality === 'low' ? null : createLeaves(scene)
   const wind = new THREE.Vector3(0.9, 0, 0.4)
@@ -121,7 +129,7 @@ async function boot() {
       const w = wheels[i]
       if (w.contact) smoke.emit(w.contactPoint, smokeGate(t.drifting, w.slide), t.vel, paused ? 0 : dt)
     }
-    smoke.update(dt)
+    smoke.update(paused ? 0 : dt, camera)
     skids.flush()
 
     cam.update(t, dt)
@@ -129,6 +137,13 @@ async function boot() {
     leaves?.update(dt, camera.position, wind)
     sun.position.set(t.pos.x - 45, 26, t.pos.z + 70)
     sun.target.position.set(t.pos.x, 0, t.pos.z)
+    rim.target.position.set(t.pos.x, t.pos.y, t.pos.z)
+    rim.position.set(t.pos.x * 2 - camera.position.x, t.pos.y + 3, t.pos.z * 2 - camera.position.z)
+    lamps.update(camera.position)
+    if (embers) {
+      embers.setSources(lamps.lights.filter((l) => l.intensity > 0).map((l) => l.position))
+      embers.update(paused ? 0 : dt, camera)
+    }
     post.render(t.speed)
   })
 
@@ -138,6 +153,8 @@ async function boot() {
       wheels: () => car.wheels(),
       cameraY: () => camera.position.y - car.telemetry().pos.y,
       skidCount: () => skids.buffer.count,
+      smokeLive: () => smoke.live,
+      activeLamps: () => lamps.lights.filter((l) => l.intensity > 0).length,
       quality: () => post.tier,
       speedFx: (s: number) => post.effectAt(s),
       carModel: () => visual.root.getObjectByName('body') !== undefined,

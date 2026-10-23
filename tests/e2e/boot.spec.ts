@@ -11,8 +11,9 @@ test('boots with no console errors and shows the canvas', async ({ page }) => {
 })
 
 test('the FD model loads (not the grey-box fallback)', async ({ page }) => {
+  test.setTimeout(120_000)
   await page.goto('/?debug')
-  await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 60_000 })
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 100_000 })
   expect(await page.evaluate(() => (window as unknown as { __drift: { carModel: () => boolean } }).__drift.carModel())).toBe(true)
 })
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu'
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { palette } from './palette'
 
 let gradient2: THREE.DataTexture | null = null
@@ -29,6 +30,7 @@ export interface ToonOptions {
   transparent?: boolean
   opacity?: number
   side?: THREE.Side
+  vertexColors?: boolean
 }
 
 export function toonMaterial(o: ToonOptions): THREE.MeshToonNodeMaterial {
@@ -39,6 +41,7 @@ export function toonMaterial(o: ToonOptions): THREE.MeshToonNodeMaterial {
     transparent: o.transparent ?? false,
     opacity: o.opacity ?? 1,
     side: o.side ?? THREE.FrontSide,
+    vertexColors: o.vertexColors ?? false,
   })
   if (o.emissive) {
     m.emissive = new THREE.Color(o.emissive)
@@ -61,19 +64,33 @@ const nameOverrides: Record<string, Partial<ToonOptions>> = {
 
 const cache = new Map<string, THREE.MeshToonNodeMaterial>()
 
+/** Weld vertices and recompute smooth normals so outline hulls do not crack at hard edges. */
+const smoothed = new WeakSet<THREE.BufferGeometry>()
+function smoothForOutline(mesh: THREE.Mesh) {
+  if (smoothed.has(mesh.geometry)) return
+  const g = mesh.geometry.clone()
+  g.deleteAttribute('normal')
+  const welded = mergeVertices(g, 1e-4)
+  welded.computeVertexNormals()
+  smoothed.add(welded)
+  mesh.geometry = welded
+}
+
 /**
  * Replace every material in a loaded glTF with a toon material of the same
- * colour, reusing one material per name. Casts/receives shadows.
+ * colour, sharing one material per (name, map, side, transparency).
+ * Casts/receives shadows; geometry gets welded smooth normals for the outline pass.
  */
 export function toonify(root: THREE.Object3D, opts: { shadows?: boolean } = {}): THREE.Object3D {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
+    if (!(mesh as THREE.Mesh & { isSkinnedMesh?: boolean }).isSkinnedMesh) smoothForOutline(mesh)
     mesh.castShadow = opts.shadows ?? true
     mesh.receiveShadow = opts.shadows ?? true
     const convert = (src: THREE.Material): THREE.Material => {
       const s = src as THREE.MeshStandardMaterial
-      const key = s.name || `#${s.color?.getHexString?.() ?? 'fff'}`
+      const key = [s.name || `#${s.color?.getHexString?.() ?? 'fff'}`, s.map?.uuid ?? '', s.side, s.transparent, s.vertexColors].join('|')
       const hit = cache.get(key)
       if (hit) return hit
       const emissiveOn = s.emissive && s.emissive.getHex() !== 0 && s.emissiveIntensity > 0
@@ -82,6 +99,10 @@ export function toonify(root: THREE.Object3D, opts: { shadows?: boolean } = {}):
         map: s.map,
         emissive: emissiveOn ? `#${s.emissive.getHexString()}` : undefined,
         emissiveIntensity: emissiveOn ? Math.min(s.emissiveIntensity, 4) : undefined,
+        side: s.side,
+        transparent: s.transparent,
+        opacity: s.opacity,
+        vertexColors: s.vertexColors,
       }
       const m = toonMaterial({ ...base, ...nameOverrides[s.name] })
       m.name = s.name

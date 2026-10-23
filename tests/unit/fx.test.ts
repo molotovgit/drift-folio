@@ -5,7 +5,7 @@ vi.mock('three/webgpu', () => ({}))
 vi.mock('three/tsl', () => ({}))
 
 const { SkidBuffer } = await import('../../src/fx/skids')
-const { smokeGate } = await import('../../src/fx/smoke')
+const { smokeGate, smokePoolSize, SMOKE_RATE, SMOKE_MAX_LIFE } = await import('../../src/fx/smoke')
 
 describe('SkidBuffer', () => {
   it('never exceeds capacity after 10,000 adds and wraps around', () => {
@@ -30,5 +30,11 @@ describe('smokeGate', () => {
     expect(smokeGate(false, 0.3)).toBe(0)
     expect(smokeGate(true, 0.8)).toBeCloseTo(0.8)
     expect(smokeGate(false, 0.7)).toBeCloseTo(0.7)
+  })
+})
+
+describe('smoke pool', () => {
+  it('is big enough that two wheels at full rate never recycle a live puff', () => {
+    expect(smokePoolSize(2)).toBeGreaterThanOrEqual(SMOKE_RATE * 2 * SMOKE_MAX_LIFE)
   })
 })
