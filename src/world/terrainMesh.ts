@@ -34,7 +34,7 @@ export class TerrainMesh {
         const hx = terrain.heights[iz * n + Math.min(ix + 1, n - 1)] - terrain.heights[iz * n + Math.max(ix - 1, 0)]
         const hz = terrain.heights[Math.min(iz + 1, n - 1) * n + ix] - terrain.heights[Math.max(iz - 1, 0) * n + ix]
         const slope = Math.hypot(hx, hz) / (2 * cell)
-        const litter = Math.max(0, noise.fbm(x / 30, z / 30, 3) - 0.52) * 3.2
+        const litter = Math.max(0, noise.fbm(x / 30, z / 30, 3) - 0.56) * 2.4
         tmp.copy(ground).lerp(leaves, Math.min(0.75, litter)).lerp(shadow, Math.min(0.8, slope * 0.9))
         colors.set([tmp.r, tmp.g, tmp.b], i * 3)
       }

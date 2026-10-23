@@ -15,9 +15,10 @@ import { SkyDome } from '../render/sky'
 import { skipOverlay } from '../ui/skip'
 import { BoxCarVisual, FdCarVisual, type CarVisual } from '../vehicle/carVisual'
 import { DriftCar, type Telemetry } from '../vehicle/driftCar'
+import type { Checkpoint } from '../world/checkpoints'
 import { greyboxDressing, PropPlacer } from '../world/dressing'
 import { Greybox } from '../world/greybox'
-import { groundHeight } from '../world/ground'
+import { MountainWorld } from '../world/mountainWorld'
 import type { GameOptions } from './options'
 
 const REAR_WHEELS = [2, 3] as const
@@ -42,7 +43,9 @@ export class Game {
   private readonly skids: SkidMarks
   private readonly leaves: LeafSystem | null
   private readonly embers: EmberSystem | null
-  private readonly greybox: Greybox
+  /** the playable world: the mountain, or the flat test pad with ?map=pad */
+  private readonly mountain: MountainWorld | null
+  private readonly pad: Greybox | null
   private controls: ControlState = idleControls()
 
   private constructor(
@@ -61,8 +64,10 @@ export class Game {
 
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
     this.world.timestep = PHYSICS_STEP
-    this.greybox = new Greybox(scene, this.world)
-    this.car = new DriftCar(this.world, { x: 0, y: 0, z: 0 }, 0)
+    this.mountain = options.map === 'mountain' ? new MountainWorld(scene, this.world) : null
+    this.pad = this.mountain ? null : new Greybox(scene, this.world)
+    const start = this.startPoint
+    this.car = new DriftCar(this.world, start.pos, start.yaw)
     visual.setHeadlights(quality !== 'low')
     scene.add(visual.root)
 
@@ -70,7 +75,8 @@ export class Game {
     this.skids = new SkidMarks(scene)
     this.leaves = quality === 'low' ? null : new LeafSystem(scene)
     this.embers = quality === 'high' ? new EmberSystem(scene) : null
-    this.camera = new ChaseCamera(engine.camera)
+    const mountain = this.mountain
+    this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
   }
@@ -79,21 +85,30 @@ export class Game {
   static async start(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>, options: GameOptions): Promise<Game> {
     const [engine] = await Promise.all([Engine.create(canvas, tier), RAPIER.init()])
     engine.onContextLost(() => skipOverlay.open('context-lost'))
-    // props and the car model download in parallel
-    const propsLoading = PropPlacer.place(engine.scene, greyboxDressing())
     const visual = await FdCarVisual.load().catch((err) => {
       console.warn('FD model failed to load, using the grey-box car', err)
       return new BoxCarVisual()
     })
     const game = new Game(engine, visual, options.qualityFor(engine.isMobile), options)
-    await game.dress(propsLoading)
+    await game.dress()
     if (options.debug) game.exposeDebugApi()
     return game
   }
 
-  /** Once the props are placed, hand the lamp bulbs to the light pool. */
-  private async dress(propsLoading: Promise<THREE.Group>): Promise<void> {
-    this.lamps.setAnchors(PropPlacer.anchors(await propsLoading, 'light_anchor'))
+  /** Where the car spawns (and resets to before any checkpoint is passed). */
+  private get startPoint(): Checkpoint {
+    return this.mountain?.start ?? { pos: { x: 0, y: 0, z: 0 }, yaw: 0, edgeId: 'pad' }
+  }
+
+  /** Place the world's props, then hand the lamp bulbs to the light pool. */
+  private async dress(): Promise<void> {
+    if (this.mountain) {
+      await this.mountain.dress()
+      this.lamps.setAnchors([...this.mountain.lamps])
+    } else {
+      const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
+      this.lamps.setAnchors(PropPlacer.anchors(props, 'light_anchor'))
+    }
   }
 
   /** One fixed physics tick. */
@@ -111,16 +126,18 @@ export class Game {
     this.readControls(dt, paused)
 
     const alpha = paused ? 1 : this.loop.advance(rawDt)
-    this.greybox.update()
+    this.pad?.update()
     const pose = this.car.pose(alpha)
     this.visual.sync(this.car, pose)
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
+    if (!paused && this.mountain?.checkpoints.update(t, dt)) this.resetCar()
 
     this.camera.update(t, dt)
     const camPos = this.engine.camera.position
     this.sky.follow(this.engine.camera)
     this.lighting.update(t.pos, camPos)
     this.lamps.update(camPos)
+    this.mountain?.update(this.engine.camera)
     // effects after the camera and lamps so billboards/wrapping use this frame's view
     this.updateEffects(t, fxDt)
     this.post.render(t.speed)
@@ -134,10 +151,10 @@ export class Game {
     if (c.reset) this.resetCar()
   }
 
-  /** R: put the car back on the ground where it is, upright, facing the same way. */
+  /** R (or an automatic stuck/fell reset): back to the last checkpoint passed, facing down the road. */
   private resetCar(): void {
-    const t = this.car.telemetry()
-    this.car.resetTo({ x: t.pos.x, y: groundHeight(this.world, t.pos.x, t.pos.z, this.car.body), z: t.pos.z }, t.yaw)
+    const cp = this.mountain?.checkpoints.last ?? this.startPoint
+    this.car.resetTo(cp.pos, cp.yaw)
     this.camera.snap()
   }
 
@@ -177,6 +194,7 @@ export class Game {
       speedFx: (s: number) => this.post.effectAt(s),
       carModel: () => this.visual.root.getObjectByName('body') !== undefined,
       renderInfo: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
+      drawnInstances: () => this.mountain?.drawnInstances ?? 0,
     }
   }
 }

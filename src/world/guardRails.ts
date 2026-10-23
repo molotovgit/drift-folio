@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { palette } from '../render/palette'
 import { ToonMaterials } from '../render/toon'
 import { surfaceOf } from '../vehicle/wheel'
@@ -40,15 +41,14 @@ export class GuardRails {
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
     const beamMat = ToonMaterials.create({ color: palette.rail, flatShading: false, side: THREE.DoubleSide })
     const posts: THREE.Matrix4[] = []
+    const beams: THREE.BufferGeometry[] = []
     for (const run of this.runs) {
       const { positions, indices, postAt } = GuardRails.runGeometry(run)
       const geo = new THREE.BufferGeometry()
       geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
       geo.setIndex(new THREE.BufferAttribute(indices, 1))
       geo.computeVertexNormals()
-      const beam = new THREE.Mesh(geo, beamMat)
-      beam.castShadow = true
-      this.group.add(beam)
+      beams.push(geo)
       posts.push(...postAt)
       // collider: a taller wall than the visible beam so cars can't hop it
       const wall = GuardRails.runGeometry(run, -0.3, 1.1)
@@ -56,6 +56,10 @@ export class GuardRails {
       surfaceOf.set(collider.handle, 'rail')
       this.colliders.push(collider)
     }
+    // all beams in one mesh: a single draw call for every rail on the mountain
+    const beam = new THREE.Mesh(mergeGeometries(beams), beamMat)
+    beam.castShadow = true
+    this.group.add(beam)
     const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.85, 0.12).translate(0, 0.42, 0), ToonMaterials.create({ color: palette.metalDark }), posts.length)
     posts.forEach((m, i) => postMesh.setMatrixAt(i, m))
     postMesh.castShadow = true

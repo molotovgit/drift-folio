@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { Vec3 } from '../core/math'
 import { palette } from '../render/palette'
 import { ToonMaterials } from '../render/toon'
@@ -23,6 +24,7 @@ export class RoadMesh {
   constructor(roads: RoadNetwork, world: RAPIER.World) {
     const material = ToonMaterials.create({ color: '#ffffff', map: RoadMesh.markingsTexture(), flatShading: false })
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
+    const parts: THREE.BufferGeometry[] = []
     for (const edge of roads.edges) {
       const { positions, uvs, indices } = RoadMesh.ribbon(edge)
       const geo = new THREE.BufferGeometry()
@@ -30,14 +32,16 @@ export class RoadMesh {
       geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
       geo.setIndex(new THREE.BufferAttribute(indices, 1))
       geo.computeVertexNormals()
-      const mesh = new THREE.Mesh(geo, material)
-      mesh.receiveShadow = true
-      mesh.name = `road:${edge.id}`
-      this.group.add(mesh)
+      parts.push(geo)
       const collider = world.createCollider(RAPIER.ColliderDesc.trimesh(positions, indices).setFriction(0.9), body)
       surfaceOf.set(collider.handle, 'road')
       this.colliders.push(collider)
     }
+    // one mesh for every road keeps it to a single draw call
+    const mesh = new THREE.Mesh(mergeGeometries(parts), material)
+    mesh.receiveShadow = true
+    mesh.name = 'roads'
+    this.group.add(mesh)
   }
 
   /** Two vertices per centreline sample, `width` apart, UV v in metres / DASH_PERIOD. */

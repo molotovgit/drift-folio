@@ -5,9 +5,10 @@ import { expect, test } from '@playwright/test'
  * dusk bands — magenta/violet sky and ground, red/orange foliage — not a generic look.
  */
 test('the start view is dominated by the reference dusk palette', async ({ page }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(240_000)
   await page.setViewportSize({ width: 960, height: 540 })
-  await page.goto('/?debug')
+  // low tier: software GL is too slow for the full post chain; hue bands don't depend on bloom
+  await page.goto('/?debug&quality=low')
   await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 60_000 })
   await page.waitForTimeout(2500)
   const png = (await page.locator('#scene').screenshot()).toString('base64')
