@@ -25,6 +25,20 @@ export const palette = {
   hudAccent: '#ff5c8a',
   hudGold: '#ffc04d',
   signGreen: '#2f8a5a',
+  // roadside vegetation and ground variation (warm dusk: olive and gold, never lawn green)
+  grassOlive: '#7c7a3a',
+  grassGold: '#b48a3c',
+  grassRust: '#9a5a36',
+  grassMoss: '#5f6a3a',
+  fern: '#4c7044',
+  pampasPlume: '#f0dcb4',
+  bamboo: '#8ea85a',
+  bambooLeaf: '#5c8446',
+  spiderLily: '#e0302a',
+  stone: '#9a8fa2',
+  groundGrass: '#5e4a40',
+  groundDirt: '#7a5646',
+  groundShade: '#33223e',
 } as const
 
 export type PaletteKey = keyof typeof palette

@@ -1,25 +1,22 @@
 import * as THREE from 'three/webgpu'
-import { palette } from '../render/palette'
 import { ToonMaterials } from '../render/toon'
-import { ValueNoise, type TerrainHeights } from './terrain'
+import { GroundPaint } from './groundPaint'
+import type { TerrainHeights } from './terrain'
 
 /**
- * Visible terrain built from the height grid. Vertex colours paint maroon
- * ground with patches of orange leaf litter and darker violet on steep slopes,
- * so the hillsides read like the autumn reference without textures.
+ * Visible terrain built from the height grid. Vertex colours (from
+ * `GroundPaint`) paint maroon ground with patches of dry grass and orange leaf
+ * litter, dirt shoulders, canopy shade and darker violet on steep slopes, so
+ * the hillsides read like the autumn reference without textures.
  */
 export class TerrainMesh {
   readonly mesh: THREE.Mesh
 
-  constructor(terrain: TerrainHeights) {
+  constructor(terrain: TerrainHeights, paint = new GroundPaint()) {
     const n = terrain.cells + 1
     const { minX, minZ, size } = terrain.bounds
     const positions = new Float32Array(n * n * 3)
     const colors = new Float32Array(n * n * 3)
-    const noise = new ValueNoise(21)
-    const ground = new THREE.Color(palette.terrain)
-    const shadow = new THREE.Color(palette.terrainShadow)
-    const leaves = new THREE.Color(palette.foliageOrange)
     const tmp = new THREE.Color()
     const cell = terrain.cellSize
 
@@ -34,8 +31,7 @@ export class TerrainMesh {
         const hx = terrain.heights[iz * n + Math.min(ix + 1, n - 1)] - terrain.heights[iz * n + Math.max(ix - 1, 0)]
         const hz = terrain.heights[Math.min(iz + 1, n - 1) * n + ix] - terrain.heights[Math.max(iz - 1, 0) * n + ix]
         const slope = Math.hypot(hx, hz) / (2 * cell)
-        const litter = Math.max(0, noise.fbm(x / 30, z / 30, 3) - 0.56) * 2.4
-        tmp.copy(ground).lerp(leaves, Math.min(0.75, litter)).lerp(shadow, Math.min(0.8, slope * 0.9))
+        paint.colorAt(x, z, slope, tmp)
         colors.set([tmp.r, tmp.g, tmp.b], i * 3)
       }
     }

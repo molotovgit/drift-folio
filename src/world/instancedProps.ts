@@ -23,6 +23,20 @@ export function cullConeCos(camera: THREE.Camera): number {
   return Math.cos(Math.min(Math.PI, halfH + RECULL_TURN + PROP_MARGIN))
 }
 
+/** Options for an instanced prop set. */
+export interface InstanceOptions {
+  /** cast/receive shadows (default true) */
+  shadows?: boolean
+  /** receive shadows even when not casting them (default: same as `shadows`) */
+  receiveShadow?: boolean
+  /** re-cull against the camera every frame (default true) */
+  culled?: boolean
+  /** never draw instances further than this (default CULL_DISTANCE); small plants use less */
+  cullDistance?: number
+  /** per-instance tint, parallel to the transforms (multiplies the material and vertex colours) */
+  colors?: readonly THREE.Color[]
+}
+
 /**
  * Many copies of one glTF model with instancing and CPU culling: one
  * InstancedMesh per sub-mesh of the template (a few draw calls for thousands
@@ -41,12 +55,15 @@ export class InstancedProps {
   private readonly combined = new THREE.Matrix4()
   private readonly dir = new THREE.Vector3()
 
-  private constructor(
-    template: THREE.Object3D,
-    transforms: readonly THREE.Matrix4[],
-    shadows: boolean,
-    private readonly culled: boolean,
-  ) {
+  private readonly culled: boolean
+  private readonly cullDistance: number
+  private readonly colors: readonly THREE.Color[] | null
+
+  private constructor(template: THREE.Object3D, transforms: readonly THREE.Matrix4[], opts: InstanceOptions) {
+    const shadows = opts.shadows ?? true
+    const culled = (this.culled = opts.culled ?? true)
+    this.cullDistance = opts.cullDistance ?? CULL_DISTANCE
+    this.colors = opts.colors && opts.colors.length === transforms.length ? opts.colors : null
     this.transforms = transforms
     this.positions = new Float32Array(transforms.length * 3)
     transforms.forEach((t, i) => this.positions.set([t.elements[12], t.elements[13], t.elements[14]], i * 3))
@@ -57,9 +74,13 @@ export class InstancedProps {
       const inst = new THREE.InstancedMesh(mesh.geometry, mesh.material, transforms.length)
       inst.instanceMatrix.setUsage(culled ? THREE.DynamicDrawUsage : THREE.StaticDrawUsage)
       inst.castShadow = shadows
-      inst.receiveShadow = shadows
+      inst.receiveShadow = opts.receiveShadow ?? shadows
       // culling happens on the CPU per instance; the whole mesh must never be frustum-culled
       inst.frustumCulled = false
+      if (this.colors) {
+        inst.setColorAt(0, this.colors[0]) // allocates instanceColor
+        inst.instanceColor!.setUsage(culled ? THREE.DynamicDrawUsage : THREE.StaticDrawUsage)
+      }
       // nothing is drawn until the first cull (unset instance matrices sit at the origin)
       if (culled) inst.count = 0
       this.meshes.push({ mesh: inst, local: mesh.matrixWorld.clone() })
@@ -69,8 +90,13 @@ export class InstancedProps {
   }
 
   /** Load the named model and instance it at every transform. */
-  static async create(model: string, transforms: readonly THREE.Matrix4[], opts: { shadows?: boolean; culled?: boolean } = {}): Promise<InstancedProps> {
-    return new InstancedProps(await ModelLibrary.load(model), transforms, opts.shadows ?? true, opts.culled ?? true)
+  static async create(model: string, transforms: readonly THREE.Matrix4[], opts: InstanceOptions = {}): Promise<InstancedProps> {
+    return new InstancedProps(await ModelLibrary.load(model), transforms, opts)
+  }
+
+  /** Instance an already-built template (e.g. procedural vegetation) at every transform. */
+  static fromTemplate(template: THREE.Object3D, transforms: readonly THREE.Matrix4[], opts: InstanceOptions = {}): InstancedProps {
+    return new InstancedProps(template, transforms, opts)
   }
 
   get drawCount(): number {
@@ -97,9 +123,12 @@ export class InstancedProps {
       const dx = this.positions[i * 3] - cx
       const dz = this.positions[i * 3 + 2] - cz
       const d = Math.hypot(dx, dz)
-      if (d > CULL_DISTANCE) continue
+      if (d > this.cullDistance) continue
       if (d > ALWAYS_RADIUS && (dx * fx + dz * fz) / d < coneCos) continue
-      for (const { mesh, local } of this.meshes) mesh.setMatrixAt(n, this.combined.multiplyMatrices(this.transforms[i], local))
+      for (const { mesh, local } of this.meshes) {
+        mesh.setMatrixAt(n, this.combined.multiplyMatrices(this.transforms[i], local))
+        if (this.colors) mesh.setColorAt(n, this.colors[i])
+      }
       n++
     }
     this.visible = n
@@ -108,14 +137,25 @@ export class InstancedProps {
       mesh.instanceMatrix.clearUpdateRanges()
       mesh.instanceMatrix.addUpdateRange(0, n * 16)
       mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) {
+        mesh.instanceColor.clearUpdateRanges()
+        mesh.instanceColor.addUpdateRange(0, n * 3)
+        mesh.instanceColor.needsUpdate = true
+      }
     }
   }
 
   private writeAll(): void {
     this.transforms.forEach((t, i) => {
-      for (const { mesh, local } of this.meshes) mesh.setMatrixAt(i, this.combined.multiplyMatrices(t, local))
+      for (const { mesh, local } of this.meshes) {
+        mesh.setMatrixAt(i, this.combined.multiplyMatrices(t, local))
+        if (this.colors) mesh.setColorAt(i, this.colors[i])
+      }
     })
-    for (const { mesh } of this.meshes) mesh.instanceMatrix.needsUpdate = true
+    for (const { mesh } of this.meshes) {
+      mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    }
   }
 }
 

@@ -172,7 +172,7 @@ export class Game {
   /** Place the world's props, then hand the lamp bulbs to the light pool. */
   private async dress(): Promise<void> {
     if (this.mountain) {
-      await Promise.all([this.mountain.dress(), this.features?.build()])
+      await Promise.all([this.mountain.dress(this.post.tier), this.features?.build()])
       this.lamps.setAnchors([...this.mountain.lamps])
       return
     }
