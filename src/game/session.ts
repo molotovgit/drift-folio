@@ -4,7 +4,7 @@ import type { Hud } from '../ui/hud'
 import type { Telemetry } from '../vehicle/driftCar'
 import type { RoadNetwork } from '../world/roadNetwork'
 import type { RoadRoute } from '../world/roadLayout'
-import { DriftScore } from './driftScore'
+import { DriftScore, type ScoreEvent } from './driftScore'
 import { RouteRuns, type RunRouteId } from './routeRun'
 
 /** Road route → themed run it belongs to (the cluster yard counts toward Systems Drop). */
@@ -58,6 +58,8 @@ export class DriftSession {
   private clock = 0
   /** notified when runs start, finish or are abandoned */
   runListener: RunListener | null = null
+  /** every score event (sound effects listen here) */
+  scoreListener: ((e: ScoreEvent) => void) | null = null
 
   constructor(
     private readonly roads: RoadNetwork | null,
@@ -75,7 +77,10 @@ export class DriftSession {
     // airborne (a jump) is not off-road: the timer only runs with wheels on the ground
     const offRoadCrash = this.runs.offRoad(i.t.onRoad || i.t.wheelsOnGround === 0, i.dt, i.inShortcutZone)
     const events = this.score.step({ drifting: i.t.drifting, slipDeg: i.t.slipDeg, speed: i.t.speed, dt: i.dt, crashed: i.railHit || offRoadCrash })
-    for (const e of events) this.hud.event(e)
+    for (const e of events) {
+      this.hud.event(e)
+      this.scoreListener?.(e)
+    }
     this.trackRoute(i.t, this.clock)
     this.hud.update(this.score.state(), i.t.speed)
   }

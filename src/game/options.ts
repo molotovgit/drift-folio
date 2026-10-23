@@ -23,6 +23,11 @@ export class GameOptions {
     this.map = params.get('map') === 'pad' ? 'pad' : 'mountain'
   }
 
+  /** Adapt quality to the device at runtime? Not when a tier is forced or under test. */
+  get adaptive(): boolean {
+    return this.quality === null && !this.debug
+  }
+
   /** Quality to use: explicit override, else mid on phones, high elsewhere. */
   qualityFor(isMobile: boolean): QualityTier {
     return this.quality ?? (isMobile ? 'mid' : 'high')

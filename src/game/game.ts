@@ -28,7 +28,11 @@ import { Shortcuts } from '../world/shortcuts'
 import { SHORTCUT_NAMES, ShortcutDiscovery } from './discovery'
 import { GhostLap } from './ghostLap'
 import { KeySequence } from './easterEggs'
+import { AudioSystem } from '../audio/audioSystem'
+import { surfaceOf as audioSurface } from '../audio/audioMath'
 import { Breakables } from '../world/breakables'
+import { PerfGovernor } from '../core/perfGovernor'
+import { TouchControls } from '../ui/touch'
 import { formatTime } from './session'
 import type { GameOptions } from './options'
 import { RouteRuns } from './routeRun'
@@ -73,6 +77,10 @@ export class Game {
   private readonly discovery: ShortcutDiscovery
   private readonly ghost: GhostLap
   private inDirt = false
+  /** synthesised engine, tyres, ambience and effects (silent until the first input) */
+  private readonly audio: AudioSystem
+  /** steps quality down on slow devices (null when a tier is forced) */
+  private readonly governor: PerfGovernor | null
   /** fences and the Mac mini convoy */
   private readonly breakables: Breakables | null
   /** Rapier reports chassis contacts above the force threshold here (crash rule) */
@@ -120,6 +128,12 @@ export class Game {
     this.shortcuts = this.mountain ? new Shortcuts(scene, this.world, this.mountain.roads) : null
     this.discovery = new ShortcutDiscovery(storage)
     this.ghost = new GhostLap(scene, storage)
+    this.governor = options.adaptive ? new PerfGovernor(quality) : null
+    if (TouchControls.wanted()) this.input.addSource(new TouchControls())
+    this.audio = new AudioSystem({ storage })
+    // browsers only allow audio after a user gesture: unlock on the first input of any kind
+    for (const type of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(type, () => this.audio.unlock(), { capture: true, passive: true })
+    this.session.scoreListener = (e) => this.audio.event(e)
     const mountainForProps = this.mountain
     this.breakables = mountainForProps ? new Breakables(scene, this.world, mountainForProps.roads, (x, z) => mountainForProps.heightAt(x, z)) : null
     // ↑↑↓↓←→←→BA swaps the FD for a Hyper-V host on wheels
@@ -139,15 +153,25 @@ export class Game {
   }
 
   /** Initialise everything (renderer, physics wasm, car model, props) and start the loop. */
-  static async start(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>, options: GameOptions): Promise<Game> {
+  static async start(
+    canvas: HTMLCanvasElement,
+    tier: Exclude<GpuTier, 'none'>,
+    options: GameOptions,
+    progress: (fraction: number, what: string) => void = () => {},
+  ): Promise<Game> {
+    progress(0.1, 'Starting the engine…')
     const [engine] = await Promise.all([Engine.create(canvas, tier), RAPIER.init()])
+    progress(0.3, 'Rolling the FD out…')
     engine.onContextLost(() => skipOverlay.open('context-lost'))
     const visual = await FdCarVisual.load().catch((err) => {
       console.warn('FD model failed to load, using the grey-box car', err)
       return new BoxCarVisual()
     })
+    progress(0.45, 'Building the mountain…')
     const game = new Game(engine, visual, options.qualityFor(engine.isMobile), options)
+    progress(0.75, 'Planting maples, hanging lanterns…')
     await game.dress()
+    progress(1, 'Ready')
     if (options.debug) game.exposeDebugApi()
     return game
   }
@@ -181,7 +205,10 @@ export class Game {
       // hard hits on guard rails and the train both crash the running score
       const hit = (h: number) => surfaceOf.get(h) === 'rail' || surfaceOf.get(h) === 'train'
       if (hit(e.collider1()) || hit(e.collider2())) {
-        if (!this.railHit) this.railHits++
+        if (!this.railHit) {
+          this.railHits++
+          this.audio.event({ type: 'crash', value: 0 })
+        }
         this.railHit = true
       }
     })
@@ -190,6 +217,7 @@ export class Game {
 
   /** One rendered frame. */
   private frame(rawDt: number): void {
+    this.adaptQuality(rawDt)
     const dt = Math.min(rawDt, MAX_FRAME)
     const paused = skipOverlay.isOpen
     const fxDt = paused ? 0 : dt
@@ -219,6 +247,16 @@ export class Game {
     this.lighting.update(t.pos, camPos)
     this.lamps.update(camPos)
     this.mountain?.update(this.engine.camera)
+    this.audio.update({
+      speed: t.speed,
+      throttle: this.controls.throttle,
+      slipDeg: t.slipDeg,
+      drifting: t.drifting,
+      wheelsOnGround: t.wheelsOnGround,
+      surface: audioSurface(t),
+      horn: this.controls.horn,
+      zone: this.session.route === 'town' ? 'town' : 'mountain',
+    })
     // effects after the camera and lamps so billboards/wrapping use this frame's view
     this.updateEffects(t, fxDt)
     this.post.render(t.speed)
@@ -235,6 +273,21 @@ export class Game {
     if (ev.secretCar) {
       this.visual.setPaint('#ffc04d')
       this.hud.hint('Secret livery unlocked')
+    }
+  }
+
+  /** Let the governor step quality down on slow devices; give up → text version. */
+  private adaptQuality(rawDt: number): void {
+    const action = this.governor?.frame(rawDt)
+    if (!action) return
+    if (action.type === 'give-up') {
+      skipOverlay.open('slow')
+      return
+    }
+    this.post.setTier(action.tier)
+    if (action.tier === 'low') {
+      this.engine.setPixelRatioCap(1)
+      this.visual.setHeadlights(false)
     }
   }
 
@@ -274,11 +327,13 @@ export class Game {
     // driving inputs are ignored while the overlay is open
     this.controls = paused ? { ...c, throttle: 0, brake: 0, steer: 0, handbrake: false } : c
     if (c.camera) this.camera.toggleMode()
+    if (c.mute) this.hud.hint(this.audio.toggleMute() ? 'Sound off (M)' : 'Sound on (M)')
     if (c.reset) this.resetCar()
   }
 
   /** R (or an automatic stuck/fell reset): back to the last checkpoint passed, facing down the road. */
   private resetCar(): void {
+    this.audio.event({ type: 'reset' })
     const cp = this.mountain?.checkpoints.last ?? this.startPoint
     this.car.resetTo(cp.pos, cp.yaw)
     this.camera.snap()
@@ -359,6 +414,7 @@ export class Game {
       padUrl: () => this.padUrl,
       shortcutsFound: () => this.discovery.all(),
       ghostBeaten: () => this.ghost.beaten,
+      audioContexts: () => (this.audio.unlocked ? 1 : 0),
       peakOpen: () => this.shortcuts?.peakOpen ?? false,
       gymkhanaBest: () => this.town?.gymkhana.best ?? null,
       corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index, clip: s.clip, turn: s.turn })) ?? [],
