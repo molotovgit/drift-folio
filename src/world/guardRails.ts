@@ -36,8 +36,16 @@ export class GuardRails {
   readonly runs: RailRun[]
   readonly colliders: RAPIER.Collider[] = []
 
-  constructor(roads: RoadNetwork, world: RAPIER.World) {
-    this.runs = roads.edges.filter((e) => !NO_RAIL_ROUTES.has(e.route)).flatMap((e) => GuardRails.findRuns(e))
+  constructor(
+    roads: RoadNetwork,
+    world: RAPIER.World,
+    /** deliberate breaks in the rail (S3 "broken rail" shortcut) */
+    gaps: readonly { x: number; z: number; r: number }[] = [],
+  ) {
+    this.runs = roads.edges
+      .filter((e) => !NO_RAIL_ROUTES.has(e.route))
+      .flatMap((e) => GuardRails.findRuns(e))
+      .flatMap((run) => GuardRails.splitAtGaps(run, gaps))
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
     const beamMat = ToonMaterials.create({ color: palette.rail, flatShading: false, side: THREE.DoubleSide })
     const posts: THREE.Matrix4[] = []
@@ -94,6 +102,24 @@ export class GuardRails {
     }
     flush(edge.points.length - 1)
     return runs
+  }
+
+  /** Remove the samples of a run that fall inside any gap, splitting it in two if needed. */
+  static splitAtGaps(run: RailRun, gaps: readonly { x: number; z: number; r: number }[]): RailRun[] {
+    if (!gaps.length) return [run]
+    const out: RailRun[] = []
+    let from = -1
+    for (let i = run.from; i <= run.to; i++) {
+      const p = run.edge.points[i]
+      const inGap = gaps.some((g) => Math.hypot(p.x - g.x, p.z - g.z) < g.r)
+      if (!inGap && from < 0) from = i
+      if ((inGap || i === run.to) && from >= 0) {
+        const to = inGap ? i - 1 : i
+        if (to - from >= 2) out.push({ ...run, from, to })
+        from = -1
+      }
+    }
+    return out
   }
 
   /** Vertical strip between `low` and `high` metres above the road along a run, plus post transforms. */

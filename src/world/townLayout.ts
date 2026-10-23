@@ -5,7 +5,7 @@ import type { Vec3 } from '../core/math'
  * positions are world metres; lots are discs the terrain is flattened under.
  */
 export interface FlatLot {
-  name: 'plaza' | 'skidpad' | 'gymkhana'
+  name: 'plaza' | 'skidpad' | 'gymkhana' | 'peak'
   x: number
   z: number
   r: number
