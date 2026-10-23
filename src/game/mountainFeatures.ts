@@ -49,7 +49,7 @@ export class MountainFeatures {
   constructor(private readonly host: FeatureHost) {
     const { scene, world, mountain, storage } = host
     this.corners = new ProjectCorners(scene, mountain.roads)
-    this.town = new BaseTown(scene, world, storage)
+    this.town = new BaseTown(scene, world, storage, mountain.roads)
     this.shortcuts = new Shortcuts(scene, world, mountain.roads)
     this.discovery = new ShortcutDiscovery(storage)
     this.ghost = new GhostLap(scene, storage)

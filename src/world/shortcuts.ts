@@ -53,7 +53,7 @@ export class Shortcuts {
   ) {
     this.dirt = [riverbed(roads), brokenRailChute(roads), peakTrail(roads)]
     this.cut = restStopCut(roads)
-    scene.add(new PavedPath(world, this.cut).mesh)
+    scene.add(new PavedPath(world, this.cut, roads).mesh)
     this.railway = new Railway(scene, world, railBed(roads), railCrossings(roads))
     this.ramp = this.rampSpot()
     this.buildRampCollider()

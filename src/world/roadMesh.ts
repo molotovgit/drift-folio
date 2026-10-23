@@ -1,52 +1,43 @@
-import RAPIER from '@dimforge/rapier3d-compat'
+import type RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three/webgpu'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import type { Vec3 } from '../core/math'
 import { palette } from '../render/palette'
 import { ToonMaterials } from '../render/toon'
-import { surfaceOf } from '../vehicle/wheel'
 import type { RoadEdge, RoadNetwork } from './roadNetwork'
+import { RIBBON_ROW, RoadSurface, type SurfaceGeometry } from './roadSurface'
 
-/** Texture repeats every this many metres along the road. */
-const DASH_PERIOD = 8
+// re-exported so layout modules can keep importing it from here
+export { leftOf } from './spline'
+
 /**
- * Where several roads meet, their ribbons overlap. Each road gets a different
- * small lift near each shared node (by its rank among the roads at that node),
- * fading out over JUNCTION_FADE metres, so overlaps never z-fight.
+ * Where several roads meet, their ribbons overlap (and the junction apron lies
+ * under them). Each road gets a different small lift near each shared node (by
+ * its rank among the roads at that node, apron lowest), fading out over
+ * JUNCTION_FADE metres, so overlaps never z-fight.
  */
 const JUNCTION_LIFT = 0.018
 const JUNCTION_FADE = 16
 
-/** Left-hand unit normal (x, z) of a horizontal tangent: facing +Z, left is +X. */
-export const leftOf = (tx: number, tz: number) => ({ x: tz, z: -tx })
-
 /**
- * Asphalt ribbons for every road plus matching trimesh colliders tagged 'road'.
- * One canvas texture gives the edge lines and dashed centre line.
+ * Asphalt ribbons and junction aprons for every road, plus matching trimesh
+ * colliders tagged 'road' (see RoadSurface). One canvas texture gives the edge
+ * lines and dashed centre line.
  */
 export class RoadMesh {
   readonly group = new THREE.Group()
-  readonly colliders: RAPIER.Collider[] = []
+  readonly colliders: RAPIER.Collider[]
 
   constructor(roads: RoadNetwork, world: RAPIER.World) {
     const material = ToonMaterials.create({ color: '#ffffff', map: RoadMesh.markingsTexture(), flatShading: false })
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
-    const parts: THREE.BufferGeometry[] = []
     const rank = RoadMesh.junctionRanks(roads)
+    const parts: THREE.BufferGeometry[] = []
     for (const edge of roads.edges) {
-      const { positions, uvs, indices } = RoadMesh.ribbon(edge)
-      const visual = RoadMesh.liftNearJunctions(positions, edge, rank.get(edge.id)!)
-      const geo = new THREE.BufferGeometry()
-      geo.setAttribute('position', new THREE.BufferAttribute(visual, 3))
-      geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-      geo.setIndex(new THREE.BufferAttribute(indices, 1))
-      geo.computeVertexNormals()
-      parts.push(geo)
-      // the collider keeps the true (un-lifted) surface
-      const collider = world.createCollider(RAPIER.ColliderDesc.trimesh(positions, indices).setFriction(0.9), body)
-      surfaceOf.set(collider.handle, 'road')
-      this.colliders.push(collider)
+      const ribbon = RoadSurface.ribbon(edge)
+      parts.push(RoadMesh.geometry({ ...ribbon, positions: RoadMesh.liftNearJunctions(ribbon.positions, edge, rank.get(edge.id)!) }))
     }
+    for (const apron of RoadSurface.aprons(roads)) parts.push(RoadMesh.geometry(apron))
+    // the colliders keep the true (un-lifted) surface
+    this.colliders = RoadSurface.colliders(roads, world)
     // one mesh for every road keeps it to a single draw call
     const mesh = new THREE.Mesh(mergeGeometries(parts), material)
     mesh.receiveShadow = true
@@ -69,38 +60,29 @@ export class RoadMesh {
     return out
   }
 
-  /** Copy of ribbon positions with the per-junction lift applied near each end. */
+  /** Copy of ribbon positions with the per-junction lift applied near each end (every rank sits above the apron). */
   static liftNearJunctions(positions: Float32Array, edge: RoadEdge, rank: { from: number; to: number }): Float32Array {
     const out = positions.slice()
     const fade = (d: number) => Math.max(0, 1 - d / JUNCTION_FADE)
     for (let i = 0; i < edge.points.length; i++) {
-      const lift = JUNCTION_LIFT * (rank.from * fade(edge.dist[i]) + rank.to * fade(edge.length - edge.dist[i]))
-      out[i * 6 + 1] += lift
-      out[i * 6 + 4] += lift
+      const lift = JUNCTION_LIFT * ((rank.from + 1) * fade(edge.dist[i]) + (rank.to + 1) * fade(edge.length - edge.dist[i]))
+      for (let k = 0; k < RIBBON_ROW; k++) out[(i * RIBBON_ROW + k) * 3 + 1] += lift
     }
     return out
   }
 
-  /** Two vertices per centreline sample, `width` apart, UV v in metres / DASH_PERIOD. */
-  static ribbon(edge: RoadEdge): { positions: Float32Array; uvs: Float32Array; indices: Uint32Array } {
-    const n = edge.points.length
-    const positions = new Float32Array(n * 2 * 3)
-    const uvs = new Float32Array(n * 2 * 2)
-    const half = edge.width / 2
-    for (let i = 0; i < n; i++) {
-      const p: Vec3 = edge.points[i]
-      const t = edge.tangent(i)
-      const l = leftOf(t.x, t.y)
-      positions.set([p.x + l.x * half, p.y, p.z + l.z * half, p.x - l.x * half, p.y, p.z - l.z * half], i * 6)
-      const v = edge.dist[i] / DASH_PERIOD
-      uvs.set([0, v, 1, v], i * 4)
-    }
-    const indices = new Uint32Array((n - 1) * 6)
-    for (let i = 0; i < n - 1; i++) {
-      const a = i * 2
-      indices.set([a, a + 1, a + 2, a + 1, a + 3, a + 2], i * 6)
-    }
-    return { positions, uvs, indices }
+  /** One row of RIBBON_ROW vertices per centreline sample, `width` across, UV v in metres / DASH_PERIOD. */
+  static ribbon(edge: RoadEdge): SurfaceGeometry {
+    return RoadSurface.ribbon(edge)
+  }
+
+  private static geometry({ positions, uvs, indices }: SurfaceGeometry): THREE.BufferGeometry {
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+    geo.setIndex(new THREE.BufferAttribute(indices, 1))
+    geo.computeVertexNormals()
+    return geo
   }
 
   /** Asphalt with white edge lines and a dashed centre line (u across, v along). */

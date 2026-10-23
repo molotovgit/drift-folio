@@ -8,10 +8,17 @@ import type { Vec2 } from '../core/math'
 /**
  * Centripetal Catmull-Rom through 2D control points, resampled at a fixed
  * arc-length spacing. Endpoints are included exactly.
+ *
+ * `before` / `after` are optional phantom points beyond each end. By default
+ * the end segment is mirrored; passing the neighbouring road's control point
+ * instead makes two splines that meet at a node share the same tangent there
+ * (the tangent at an end depends only on its phantom, the end and the next point).
  */
-export function catmullRom2D(ctrl: Vec2[], spacing: number): Vec2[] {
+export function catmullRom2D(ctrl: Vec2[], spacing: number, before?: Vec2, after?: Vec2): Vec2[] {
   if (ctrl.length < 2) return ctrl.map((p) => ({ ...p }))
-  const pts = [extrapolate(ctrl[1], ctrl[0]), ...ctrl, extrapolate(ctrl[ctrl.length - 2], ctrl[ctrl.length - 1])]
+  const head = before ?? extrapolate(ctrl[1], ctrl[0])
+  const tail = after ?? extrapolate(ctrl[ctrl.length - 2], ctrl[ctrl.length - 1])
+  const pts = [head, ...ctrl, tail]
   const dense: Vec2[] = []
   for (let i = 1; i < pts.length - 2; i++) {
     const [p0, p1, p2, p3] = [pts[i - 1], pts[i], pts[i + 1], pts[i + 2]]
@@ -21,6 +28,9 @@ export function catmullRom2D(ctrl: Vec2[], spacing: number): Vec2[] {
   dense.push({ ...ctrl[ctrl.length - 1] })
   return resample(dense, spacing)
 }
+
+/** Left-hand unit normal (x, z) of a horizontal tangent: facing +Z, left is +X. */
+export const leftOf = (tx: number, tz: number) => ({ x: tz, z: -tx })
 
 const dist = (a: Vec2, b: Vec2) => Math.hypot(b.x - a.x, b.y - a.y)
 const extrapolate = (from: Vec2, to: Vec2): Vec2 => ({ x: to.x * 2 - from.x, y: to.y * 2 - from.y })

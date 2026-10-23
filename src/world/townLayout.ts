@@ -13,13 +13,14 @@ export interface FlatLot {
   y: number
 }
 
+// heights sit level with the street each lot meets, so the ramps where they join stay small (LotSurface)
 export const TOWN_LOTS: readonly FlatLot[] = [
   // main plaza in front of the pit garage, touching the town street at z ≈ 840
-  { name: 'plaza', x: 0, z: 884, r: 44, y: -117.4 },
+  { name: 'plaza', x: 0, z: 884, r: 44, y: -117.2 },
   // skidpad lot with the donut ring, west of the plaza
-  { name: 'skidpad', x: -96, z: 870, r: 31, y: -116.8 },
+  { name: 'skidpad', x: -96, z: 870, r: 31, y: -117.45 },
   // gymkhana lot by the west street
-  { name: 'gymkhana', x: 176, z: 884, r: 32, y: -117.6 },
+  { name: 'gymkhana', x: 176, z: 884, r: 32, y: -117.75 },
 ]
 
 export const lot = (name: FlatLot['name']): FlatLot => TOWN_LOTS.find((l) => l.name === name)!

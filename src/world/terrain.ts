@@ -1,5 +1,6 @@
 import { clamp, lerp } from '../core/math'
-import type { RoadNetwork } from './roadNetwork'
+import { LotSurface } from './lotSurface'
+import type { RoadHit, RoadNetwork } from './roadNetwork'
 import type { Channel } from './shortcutLayout'
 import type { FlatLot } from './townLayout'
 
@@ -83,14 +84,16 @@ export class TerrainHeights {
   readonly heights: Float32Array
   private readonly noise = new ValueNoise(7)
   private readonly channels: { c: Channel; box: ChannelBox }[]
+  private readonly lots: LotSurface[]
 
   constructor(
     private readonly roads: RoadNetwork,
     /** paved lots (town) the ground is flattened under */
-    private readonly lots: readonly FlatLot[] = [],
+    lots: readonly FlatLot[] = [],
     /** dirt shortcuts and the railway bed, carved to their height profile */
     channels: readonly Channel[] = [],
   ) {
+    this.lots = lots.map((l) => new LotSurface(l, roads))
     this.channels = channels.map((c) => ({ c, box: ChannelBox.of(c) }))
     const n = this.cells + 1
     this.heights = new Float32Array(n * n)
@@ -134,44 +137,79 @@ export class TerrainHeights {
     const ridges = (this.noise.fbm(x / 70, z / 70, 4) - 0.5) * 22
     const natural = base + (swell + ridges) * away
     const withLots = this.carveChannels(x, z, this.flattenLots(x, z, natural))
-    if (!hit) return withLots
-    // carve: flat under the nearest road, blending out to the natural slope
-    let h = lerp(hit.point.y - ROAD_LIFT, withLots, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
+    if (!hit) return Math.min(withLots, this.floorAt(x, z) - ROAD_LIFT)
+    // carve: just under the nearest road's (possibly banked) surface, blending out to the natural slope
+    let h = lerp(TerrainHeights.surfaceUnder(hit, x, z) - ROAD_LIFT, withLots, smooth(CARVE_FLAT, CARVE_BLEND, hit.dist))
     // never let the ground rise through any road surface (junctions, stacked switchbacks)
-    for (const other of hits) if (other.dist < CARVE_FLAT) h = Math.min(h, other.point.y - ROAD_LIFT)
-    return h
+    for (const other of hits) if (other.dist < CARVE_FLAT) h = Math.min(h, TerrainHeights.surfaceUnder(other, x, z) - ROAD_LIFT)
+    // nor through a lot or channel floor where it ramps to meet a road inside the road's carve
+    return Math.min(h, this.floorAt(x, z) - ROAD_LIFT)
+  }
+
+  /** Road surface height at (x, z), continued sideways past the asphalt with the road's cross-slope. */
+  private static surfaceUnder(hit: RoadHit, x: number, z: number): number {
+    return hit.edge.surfaceNear(hit.index, x, z, CARVE_FLAT)
   }
 
   /** Flatten the ground under each lot (just below its paved top), blending out over 25 m. */
   private flattenLots(x: number, z: number, h: number): number {
     for (const l of this.lots) {
-      const d = Math.hypot(x - l.x, z - l.z)
-      h = lerp(l.y - ROAD_LIFT, h, smooth(l.r + 1, l.r + 25, d))
+      const d = Math.hypot(x - l.lot.x, z - l.lot.z)
+      if (d < l.lot.r + 25) h = lerp(l.heightAt(x, z) - ROAD_LIFT, h, smooth(l.lot.r + 1, l.lot.r + 25, d))
     }
     return h
   }
 
-  /** Carve each channel: flat floor at its profile height, blending into the hillside. */
+  /** Carve each channel: flat floor at its profile height (meeting the roads it touches), blending into the hillside. */
   private carveChannels(x: number, z: number, h: number): number {
     for (const { c, box } of this.channels) {
       if (!box.near(x, z)) continue
-      let best = Infinity
-      let y = 0
-      for (let i = 0; i < c.points.length - 1; i++) {
-        const a = c.points[i]
-        const b = c.points[i + 1]
-        const dx = b.x - a.x
-        const dz = b.z - a.z
-        const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz || 1), 0, 1)
-        const d = Math.hypot(a.x + dx * t - x, a.z + dz * t - z)
-        if (d < best) {
-          best = d
-          y = a.y + (b.y - a.y) * t
-        }
-      }
-      h = lerp(y - ROAD_LIFT, h, smooth(c.width / 2, c.width / 2 + CHANNEL_BLEND, best))
+      const { dist, y } = TerrainHeights.nearestOnChannel(c, x, z)
+      if (dist < c.width / 2 + CHANNEL_BLEND) h = lerp(this.roads.meet(x, z, y) - ROAD_LIFT, h, smooth(c.width / 2, c.width / 2 + CHANNEL_BLEND, dist))
     }
     return h
+  }
+
+  /**
+   * Lowest paved or channel floor covering (x, z) (Infinity if none). Floors
+   * reach a grid cell and a half (a cell diagonal) past their edge: the ground between grid vertices is
+   * interpolated, so a vertex just outside a narrow floor must be low too.
+   */
+  private floorAt(x: number, z: number): number {
+    let floor = Infinity
+    for (const l of this.lots) if (l.contains(x, z, this.cellSize * 1.5)) floor = Math.min(floor, l.heightAt(x, z))
+    for (const { c, box } of this.channels) {
+      if (!box.near(x, z)) continue
+      const { dist, y, cx, cz } = TerrainHeights.nearestOnChannel(c, x, z)
+      if (dist >= c.width / 2 + this.cellSize * 1.5) continue
+      // past the floor's edge, hold the edge's height (not the ramp of whatever road is beside it)
+      const k = Math.min(1, c.width / 2 / (dist || 1))
+      floor = Math.min(floor, this.roads.meet(cx + (x - cx) * k, cz + (z - cz) * k, y))
+    }
+    return floor
+  }
+
+  /** Distance from (x, z) to a channel's centreline, the closest centreline point and its profile height. */
+  private static nearestOnChannel(c: Channel, x: number, z: number): { dist: number; y: number; cx: number; cz: number } {
+    let best = Infinity
+    let y = 0
+    let cx = x
+    let cz = z
+    for (let i = 0; i < c.points.length - 1; i++) {
+      const a = c.points[i]
+      const b = c.points[i + 1]
+      const dx = b.x - a.x
+      const dz = b.z - a.z
+      const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz || 1), 0, 1)
+      const d = Math.hypot(a.x + dx * t - x, a.z + dz * t - z)
+      if (d < best) {
+        best = d
+        y = a.y + (b.y - a.y) * t
+        cx = a.x + dx * t
+        cz = a.z + dz * t
+      }
+    }
+    return { dist: best, y, cx, cz }
   }
 
   /**
