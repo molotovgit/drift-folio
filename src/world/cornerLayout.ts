@@ -6,18 +6,27 @@ import type { RoadEdge, RoadNetwork } from './roadNetwork'
 /**
  * Where each project corner sits (spec §6/§7). Each card is pinned to a road
  * edge near a preferred fraction of its length; the actual apex is the tightest
- * point within ±SEARCH metres so the corner is a real bend to drift.
+ * point within ±SEARCH metres (or the entry's own `search`) so the corner is a
+ * real bend to drift.
+ *
+ * Three corners per biome: one on each mountain descent, three in Lantern
+ * Valley and three in Neon Ward. Placements only: each card's content (and
+ * the route it is filed under) is unchanged.
  */
-const CORNERS: Record<CardId, { edge: string; at: number }> = {
+export const CORNERS: Readonly<Record<CardId, { edge: string; at: number; search?: number }>> = {
+  // the mountain pass: one per descent
   C1: { edge: 'platform', at: 0.55 },
-  C9: { edge: 'platform-down', at: 0.3 },
-  C2: { edge: 'platform-down', at: 0.75 },
   C3: { edge: 'automation', at: 0.3 },
-  C8: { edge: 'automation', at: 0.72 },
   C4: { edge: 'systems-a', at: 0.25 },
-  C5: { edge: 'systems-b', at: 0.5 },
-  C6: { edge: 'cluster', at: 0.3 },
-  C7: { edge: 'cluster', at: 0.72 },
+  // Lantern Valley
+  // (short region roads bend more than once: a narrow search keeps each card on its own bend)
+  C8: { edge: 'valley-descent', at: 0.56, search: 30 },
+  C9: { edge: 'valley-paddies', at: 0.71, search: 40 },
+  C5: { edge: 'valley-hairpin', at: 0.7, search: 40 },
+  // Neon Ward
+  C2: { edge: 'city-alley', at: 0.23, search: 30 },
+  C6: { edge: 'city-avenue', at: 0.51, search: 60 },
+  C7: { edge: 'city-alley', at: 0.5, search: 40 },
 }
 const SEARCH = 120
 /** the clipping point sits this far inside the centreline (toward the bend's centre) */
@@ -54,12 +63,12 @@ export function turnSideAt(e: RoadEdge, i: number): 1 | -1 {
 
 export function cornerSpots(roads: RoadNetwork): CornerSpot[] {
   return (Object.keys(CORNERS) as CardId[]).map((id) => {
-    const { edge: edgeId, at } = CORNERS[id]
+    const { edge: edgeId, at, search = SEARCH } = CORNERS[id]
     const e = roads.edge(edgeId)
     const target = at * e.length
     // other cards on the same road shrink the window so two cards never pick the same bend
     const gaps = (Object.keys(CORNERS) as CardId[]).filter((o) => o !== id && CORNERS[o].edge === edgeId).map((o) => Math.abs(CORNERS[o].at * e.length - target))
-    const window = Math.min(SEARCH, ...gaps.map((g) => g * 0.45))
+    const window = Math.min(search, ...gaps.map((g) => g * 0.45))
     // tightest sample within the search window
     let index = Math.round(at * (e.points.length - 1))
     for (let i = 0; i < e.points.length; i++) {

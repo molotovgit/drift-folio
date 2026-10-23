@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { projects } from '../../src/content/projects'
+import { BIOMES } from '../../src/world/biomes'
 import { APEX_RADIUS, cornerSpots } from '../../src/world/cornerLayout'
 import { leftOf } from '../../src/world/roadMesh'
 import { RoadNetwork } from '../../src/world/roadNetwork'
@@ -8,13 +9,25 @@ const roads = new RoadNetwork()
 const spots = cornerSpots(roads)
 
 describe('project corners (plan Task 5.1/5.2)', () => {
-  it('places all nine cards, each on a route matching its card', () => {
+  it('places all nine cards, three in each biome; the mountain ones on their own card route', () => {
     expect(spots.map((s) => s.id).sort()).toEqual(projects.map((p) => p.id).sort())
-    const routeOf = (edgeId: string) => roads.edge(edgeId).route
+    const perBiome = { mountain: 0, temple: 0, city: 0 }
     for (const s of spots) {
-      const card = projects.find((p) => p.id === s.id)!
-      const route = routeOf(s.edgeId)
-      expect(route === card.route || (card.route === 'systems-branch' && route === 'systems-branch'), s.id).toBe(true)
+      const biome = BIOMES.dominant(s.clip.x, s.clip.z)
+      perBiome[biome]++
+      const route = roads.edge(s.edgeId).route
+      // region corners sit on their region's roads; mountain corners on the descent their card is filed under
+      if (biome === 'temple') expect(route, s.id).toBe('temple')
+      else if (biome === 'city') expect(route, s.id).toBe('city')
+      else expect(route, s.id).toBe(projects.find((p) => p.id === s.id)!.route)
+    }
+    expect(perBiome).toEqual({ mountain: 3, temple: 3, city: 3 })
+  })
+
+  it('every corner is clear of the other roads: its clip on its own road, its billboard off all asphalt', () => {
+    for (const s of spots) {
+      expect(roads.index.nearest(s.clip.x, s.clip.z, 10)!.edge.id, s.id).toBe(s.edgeId)
+      expect(roads.index.nearest(s.board.x, s.board.z, 40)!.dist, s.id).toBeGreaterThan(8)
     }
   })
 

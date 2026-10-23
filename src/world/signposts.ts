@@ -4,18 +4,25 @@ import type { Telemetry } from '../vehicle/driftCar'
 import { signTexture } from './projectCorners'
 import type { RoadNetwork } from './roadNetwork'
 
-/** Junctions that carry a signpost. */
-export type ForkId = 'fork1' | 'fork2'
+/** Junctions that carry a signpost: the two mountain forks and where each region branches off. */
+export type ForkId = 'fork1' | 'fork2' | 'summit' | 'townW' | 'valleyGate' | 'cityGate'
 
 /**
  * Board labels per fork, indexed like the model's boards: sign_0 points -X,
  * sign_1 points +X, sign_2 points back-left (tools/blender/props/signpost.py).
  * With the road running +Z, +X is left: Automation Pass and Ridge West go
- * that way, Systems Drop and Ridge East the other.
+ * that way, Systems Drop and Ridge East the other. The region signs stand on
+ * the right of the road the driver arrives on (mountainLayout `landmarks`):
+ * at the summit sign_0 points across to Lantern Valley, at the town's west
+ * end south to Neon Ward, and at each region's gate along its two roads.
  */
 export const SIGN_LABELS: Record<ForkId, readonly [string, string, string]> = {
   fork1: ['SYSTEMS DROP', 'AUTOMATION PASS', 'PLATFORM RIDGE'],
   fork2: ['RIDGE EAST', 'RIDGE WEST', 'BASE TOWN'],
+  summit: ['LANTERN VALLEY', 'AUTOMATION PASS', 'PIT BOX'],
+  townW: ['NEON WARD', 'RETURN ROAD', 'BASE TOWN'],
+  valleyGate: ['HAIRPIN ROAD', 'PADDY ROAD', 'SUMMIT'],
+  cityGate: ['BACK ALLEY', 'NEON AVENUE', 'BASE TOWN'],
 }
 
 /** Boards light up when the car is this close to the fork... */
@@ -26,7 +33,7 @@ const LIT = 0.85
 const UNLIT = 0.1
 
 /**
- * The route signposts at Fork 1 and Fork 2. Each fork has one set of three
+ * The route signposts at the forks and region turn-offs. Each has one set of three
  * board materials shared by every signpost there; the set glows while the car
  * is near the fork and slow.
  */
@@ -36,7 +43,7 @@ export class Signposts {
   private litFork: ForkId | null = null
 
   constructor(roads: RoadNetwork) {
-    this.forks = (['fork1', 'fork2'] as const).map((id) => ({ id, x: roads.node(id).pos.x, z: roads.node(id).pos.z }))
+    this.forks = (Object.keys(SIGN_LABELS) as ForkId[]).map((id) => ({ id, x: roads.node(id).pos.x, z: roads.node(id).pos.z }))
   }
 
   /** Fork whose signs are lit right now, or null. */

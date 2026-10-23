@@ -3,6 +3,7 @@ import { routeNames, type RouteId } from '../content/projects'
 import type { Hud } from '../ui/hud'
 import type { Telemetry } from '../vehicle/driftCar'
 import type { RoadNetwork } from '../world/roadNetwork'
+import { REGION_NAMES } from '../world/regionLayout'
 import type { RoadRoute } from '../world/roadLayout'
 import { DriftScore, type ScoreEvent } from './driftScore'
 import { RouteRuns, type RunRouteId } from './routeRun'
@@ -20,6 +21,11 @@ const BANNER: Partial<Record<RoadRoute, RouteId>> = {
   platform: 'platform',
   systems: 'systems',
   'systems-branch': 'systems-branch',
+}
+/** Banner text for a road route: a themed route's name, a region's name, or none (summit, town, return). */
+function bannerName(route: RoadRoute): string | null {
+  const id = BANNER[route]
+  return id ? routeNames[id] : (REGION_NAMES[route] ?? null)
 }
 /** How far from a centreline the car may be and still count as "on" that road. */
 const ROUTE_SNAP = 14
@@ -94,8 +100,8 @@ export class DriftSession {
     const previous = this.currentRoute
     this.currentRoute = route
 
-    const banner = BANNER[route]
-    if (banner && BANNER[previous ?? 'summit'] !== banner) this.hud.routeBanner(routeNames[banner].toUpperCase())
+    const banner = bannerName(route)
+    if (banner && bannerName(previous ?? 'summit') !== banner) this.hud.routeBanner(banner.toUpperCase())
 
     const runRoute = RUN_ROUTE[route]
     if (previous === 'summit' && runRoute) this.startRun(runRoute, now)
