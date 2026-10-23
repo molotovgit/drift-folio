@@ -10,7 +10,7 @@ const { TerrainHeights } = await import('../../src/world/terrain')
 const { TerrainCollider } = await import('../../src/world/terrainCollider')
 const { TOWN_LOTS } = await import('../../src/world/townLayout')
 const { DESCENT_EDGES } = await import('../../src/world/roadLayout')
-const { allChannels, restStopCut } = await import('../../src/world/shortcutLayout')
+const { allChannels, PEAK, restStopCut } = await import('../../src/world/shortcutLayout')
 const { PavedPath } = await import('../../src/world/pavedPath')
 const { LotSurface } = await import('../../src/world/lotSurface')
 const { surfaceOf } = await import('../../src/vehicle/wheel')
@@ -24,7 +24,9 @@ type RoadEdge = InstanceType<typeof RoadNetwork>['edges'][number]
  */
 
 const roads = new RoadNetwork()
-const terrain = new TerrainHeights(roads, TOWN_LOTS, allChannels(roads))
+// the world's own lots: the town, the hidden peak and Lantern Valley's temple courtyard (as MountainWorld builds them)
+const { TEMPLE_LOTS } = await import('../../src/world/templeLayout')
+const terrain = new TerrainHeights(roads, [...TOWN_LOTS, { name: 'peak' as const, x: PEAK.x, z: PEAK.z, r: PEAK.r, y: PEAK.y }, ...TEMPLE_LOTS], allChannels(roads))
 let probe: RoadProbe
 
 beforeAll(async () => {

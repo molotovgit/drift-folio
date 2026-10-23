@@ -6,6 +6,12 @@ vi.mock('../../src/render/toon', async () => {
   const T = await import('three')
   return { ToonMaterials: { create: () => new T.MeshBasicMaterial({ vertexColors: true }) } }
 })
+vi.mock('../../src/world/neonAtlas', async (original) => {
+  const T = await import('three')
+  const actual = await original<typeof import('../../src/world/neonAtlas')>()
+  // no 2D canvas in the test DOM: plain textures stand in for the painted atlases
+  return { ...actual, NeonAtlas: { ready: async () => undefined, facade: () => [new T.Texture(), new T.Texture()], signs: () => new T.Texture() } }
+})
 const THREE = await import('three')
 const { TempleModels } = await import('../../src/world/templeModels')
 const { CityModels } = await import('../../src/world/cityModels')
@@ -117,5 +123,41 @@ describe('Neon Ward merged meshes', () => {
     expect(mesh).toBeTruthy()
     expect(collider.indices.length).toBeGreaterThan(1000)
     expect(RegionSurfaces.water()).toBeTruthy()
+    // built once per network
+    expect(RegionSurfaces.pavements(roads)).toBe(RegionSurfaces.pavements(roads))
   })
+})
+
+describe('region props in the scene (low tier)', () => {
+  it('builds the low tier without the detail meshes and draws the merged meshes only near them', async () => {
+    const { RegionLayouts } = await import('../../src/world/regionLayouts')
+    const { RegionProps, REGION_DRAW_DISTANCE } = await import('../../src/world/regionProps')
+    const { TerrainHeights } = await import('../../src/world/terrain')
+    const { TOWN_LOTS } = await import('../../src/world/townLayout')
+    const { TEMPLE_LOTS } = await import('../../src/world/templeLayout')
+    const { allChannels } = await import('../../src/world/shortcutLayout')
+    const roads = new RoadNetwork()
+    const terrain = new TerrainHeights(roads, [...TOWN_LOTS, ...TEMPLE_LOTS], allChannels(roads))
+    const props = await RegionProps.build(RegionLayouts.of(roads, terrain), roads, terrain, 'low')
+    const names = props.group.children.map((o) => o.name)
+    expect(names).not.toContain('city_signs_small')
+    expect(names).not.toContain('city_wet_sheen')
+    // buildings, big signs, expressway + its lights, pavements, water
+    expect(props.group.children.filter((o) => (o as Mesh).isMesh)).toHaveLength(6)
+    const cam = new THREE.PerspectiveCamera(60, 1.6)
+    const look = (x: number, z: number) => {
+      cam.position.set(x, roads.index.nearest(x, z, 20)?.point.y ?? 0, z)
+      props.update(cam)
+      return props.visibleStatics
+    }
+    // from the summit pad (over a kilometre from the ward) only the valley's water is near enough to draw
+    expect(look(0, -30)).toBe(1)
+    expect(props.group.children.filter((o) => o.visible && (o as Mesh).isMesh).map((o) => o.name)).toEqual(['valley_water'])
+    // from Automation Pass's upper sweepers, neither region's merged meshes
+    expect(look(205, 250)).toBe(0)
+    const avenue = roads.edge('city-avenue').points[200]
+    // in the ward: blocks, signs, expressway, its lights and pavements (the valley's water is far away)
+    expect(look(avenue.x, avenue.z)).toBe(5)
+    expect(REGION_DRAW_DISTANCE).toBeLessThanOrEqual(600)
+  }, 30_000)
 })

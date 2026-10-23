@@ -37,4 +37,16 @@ test.describe('the mountain (M3)', () => {
     expect(info.calls).toBeLessThanOrEqual(250)
     expect(info.triangles).toBeLessThanOrEqual(3_500_000)
   })
+
+  // the second budget point: in Neon Ward, where the merged blocks, signs and expressway are drawn
+  test('stays within the scene draw-call and triangle budget in Neon Ward', async ({ page }) => {
+    test.setTimeout(180_000)
+    await page.goto('/?debug&quality=low')
+    await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 120_000 })
+    await page.evaluate(() => (window as unknown as { __drift: Debug & { teleport: (edge: string, frac: number) => boolean } }).__drift.teleport('city-avenue', 0.5))
+    await page.waitForTimeout(1500)
+    const info = await page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.renderInfo())
+    expect(info.calls).toBeLessThanOrEqual(250)
+    expect(info.triangles).toBeLessThanOrEqual(3_500_000)
+  })
 })

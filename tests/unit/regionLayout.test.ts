@@ -8,9 +8,12 @@ vi.mock('../../src/render/toon', async () => {
   return { ToonMaterials: { create: () => new T.MeshBasicMaterial({ vertexColors: true }) } }
 })
 const { BIOMES } = await import('../../src/world/biomes')
-const { CITY_FRONT, CityLayout, OVERPASS } = await import('../../src/world/cityLayout')
+const { CITY_FRONT, CityLayout, OVERPASS, PAVE_OUTER, PILLAR } = await import('../../src/world/cityLayout')
+const { TerrainCollider } = await import('../../src/world/terrainCollider')
 const { RegionLayouts } = await import('../../src/world/regionLayouts')
 const { REGION_EDGE_DEFS, REGION_NODE_DEFS } = await import('../../src/world/regionLayout')
+const { EDGE_DEFS, NODE_DEFS } = await import('../../src/world/roadLayout')
+const { MOUNTAIN_FOREST_BOUNDS, treeKeepOut, treeSpots } = await import('../../src/world/mountainLayout')
 const { RegionSurfaces } = await import('../../src/world/regionSurfaces')
 const { RIVER_ROAD_CLEARANCE, valleyRiver, POND } = await import('../../src/world/riverLayout')
 const { RoadNetwork } = await import('../../src/world/roadNetwork')
@@ -22,6 +25,7 @@ const { TerrainHeights } = await import('../../src/world/terrain')
 const { TOWN_LOTS } = await import('../../src/world/townLayout')
 const { surfaceOf } = await import('../../src/vehicle/wheel')
 const { leftOf } = await import('../../src/world/spline')
+const { mulberry32 } = await import('../../src/world/dressing')
 
 const roads = new RoadNetwork()
 const terrain = new TerrainHeights(roads, [...TOWN_LOTS, ...TEMPLE_LOTS], allChannels(roads))
@@ -138,7 +142,7 @@ describe('Neon Ward layout', () => {
   it('signs, vending machines and pillars stay off the asphalt; the deck clears the streets under it', () => {
     for (const s of city.signs) expect(roadDist(s.x, s.z)).toBeGreaterThan(ROAD_CLEARANCE)
     for (const v of city.vending) expect(roadDist(v.x, v.z)).toBeGreaterThan(ROAD_CLEARANCE + 3)
-    for (const p of city.pillars) expect(roadDist(p.x, p.z)).toBeGreaterThanOrEqual(9)
+    for (const p of city.pillars) expect(roadDist(p.x, p.z)).toBeGreaterThanOrEqual(PAVE_OUTER + 1.5 + PILLAR.hz)
     for (let z = OVERPASS.z0; z <= OVERPASS.z1; z += 2) {
       const hit = roads.index.nearest(OVERPASS.x, z, 6)
       if (hit) expect(city.deckY - 1.3 - hit.point.y).toBeGreaterThan(7.5)
@@ -188,6 +192,43 @@ describe('regions and the roadside plants', () => {
     expect(roadside.items.filter((it) => BIOMES.weight('city', it.x, it.z) > 0.9 && it.kind === 'fern')).toHaveLength(0)
   })
 
+  it('the mountain forest stands where it always did: the regions only take trees away near themselves', () => {
+    const regionDefs = new Set(REGION_EDGE_DEFS.map((d) => d.id))
+    const regionNodes = new Set(REGION_NODE_DEFS.map((n) => n.id))
+    const mountainOnly = new RoadNetwork(
+      NODE_DEFS.filter((n) => !regionNodes.has(n.id)),
+      EDGE_DEFS.filter((e) => !regionDefs.has(e.id)),
+    )
+    const m = MOUNTAIN_FOREST_BOUNDS
+    const inSquare = (t: { x: number; z: number }) => t.x >= m.minX && t.x < m.minX + m.size && t.z >= m.minZ && t.z < m.minZ + m.size
+    const key = (t: { model: string; x: number; z: number; yaw: number; scale: number }) => `${t.model}|${t.x}|${t.z}|${t.yaw}|${t.scale}`
+    // the forest exactly as the mountain-only game planted it (147b681's treeSpots, replayed here): 5,043 trees
+    const before: { model: string; x: number; z: number; yaw: number; scale: number }[] = []
+    const rnd = mulberry32(2026)
+    const keepOut = treeKeepOut(mountainOnly)
+    for (let gz = m.minZ + 20; gz < m.minZ + m.size - 20; gz += 8.5) {
+      for (let gx = m.minX + 20; gx < m.minX + m.size - 20; gx += 8.5) {
+        const x = gx + (rnd() - 0.5) * 8.5 * 0.9
+        const z = gz + (rnd() - 0.5) * 8.5 * 0.9
+        const roll = rnd()
+        const d = mountainOnly.index.nearest(x, z, 70)?.dist ?? 999
+        if (d < 9 || keepOut.some((k) => Math.hypot(k.x - x, k.z - z) < k.r) || roll > (d < 30 ? 0.55 : d < 70 ? 0.35 : 0.12)) continue
+        const maple = d < 45 ? rnd() < 0.75 : rnd() < 0.25
+        const model = maple ? `tree_maple_${Math.floor(rnd() * 4)}` : `tree_pine_${Math.floor(rnd() * 3)}`
+        before.push({ model, x, z, yaw: rnd() * Math.PI * 2, scale: 0.8 + rnd() * 0.5 })
+      }
+    }
+    expect(before.length).toBe(5043)
+    expect(before.every(inSquare)).toBe(true)
+    const now = new Set(treeSpots(roads, terrain, treeKeepOut(roads), regions.keepOuts).map(key))
+    const regionRoads = roads.edges.filter((e) => e.route === 'temple' || e.route === 'city')
+    const nearRegion = (t: { x: number; z: number }) =>
+      BIOMES.biomeAt(t.x, t.z).mountain < 1 || regionRoads.some((e) => e.points.some((p) => Math.hypot(p.x - t.x, p.z - t.z) < 12)) || regions.keepOuts.some((k) => Math.hypot(k.x - t.x, k.z - t.z) < k.r)
+    const kept = before.filter((t) => !nearRegion(t))
+    expect(kept.length).toBeGreaterThan(4500)
+    expect(kept.filter((t) => !now.has(key(t)))).toEqual([])
+  })
+
   it('is deterministic: a second plan of the same world is identical', () => {
     const again = RegionLayouts.of(roads, new TerrainHeights(roads, [...TOWN_LOTS, ...TEMPLE_LOTS], allChannels(roads)))
     expect(again).not.toBe(regions)
@@ -202,6 +243,8 @@ describe('ward pavements', () => {
   beforeAll(async () => {
     await RAPIER.init()
     const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
+    // the terrain too, so a gap in the pavement would show as terrain (off-road), not as no hit
+    new TerrainCollider(world, terrain)
     RoadSurface.colliders(roads, world)
     RegionSurfaces.pavementCollider(world, roads)
     probe = new RoadProbe(world, surfaceOf)

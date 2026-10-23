@@ -76,8 +76,6 @@ describe('terrain heights (plan Task 3.2)', () => {
     new TerrainCollider(world, terrain)
     world.step() // rapier indexes new colliders for queries on step
     const ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
-    // off the 4 m grid lines: a vertical ray exactly through a heightfield vertex can slip
-    // between Rapier's cells (a float edge case on any grid this size, measure-zero in play)
     const probes = [
       [0.5, 50.5], [150.5, 300.5], [-200.5, 200.5], [300.5, 700.5], [-50.5, 820.5], [400.5, 0.5], [-600.5, 1000.5], [-450.5, 100.5], [450.5, 1100.5],
     ]
@@ -87,5 +85,31 @@ describe('terrain heights (plan Task 3.2)', () => {
       expect(hit, `${x},${z}`).not.toBeNull()
       expect(500 - hit!.timeOfImpact).toBeCloseTo(terrain.heightAt(x, z), 0)
     }
+  })
+
+  it('vertical rays exactly on the height grid lines and vertices never slip through the heightfield', () => {
+    // a ray straight down a Rapier heightfield cell line can miss (on the 1648 m field most lines
+    // would); the collider sits GRID_NUDGE off the grid, so round world coordinates never hit a line
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
+    new TerrainCollider(world, terrain)
+    world.step()
+    const ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
+    const { minX, minZ, size } = terrain.bounds
+    const cell = terrain.cellSize
+    let misses = 0
+    let rays = 0
+    for (let i = 1; i < terrain.cells; i += 7) {
+      for (let j = 1; j < terrain.cells; j += 7) {
+        // a vertex, a point on an X line and one on a Z line
+        for (const [fx, fz] of [[0, 0], [0, 0.5], [0.5, 0]]) {
+          ray.origin = { x: minX + (i + fx) * cell, y: 500, z: minZ + (j + fz) * cell }
+          rays++
+          if (!world.castRay(ray, 1000, true)) misses++
+        }
+      }
+    }
+    expect(rays).toBeGreaterThan(9000)
+    expect(misses).toBe(0)
+    expect(size / terrain.cells).toBe(cell)
   })
 })

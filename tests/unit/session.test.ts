@@ -39,6 +39,20 @@ describe('DriftSession', () => {
     expect(hud.hint).toHaveBeenCalledWith(expect.stringMatching(/^Systems Drop: 1:12\.4 · \d+ pts · new best$/))
   })
 
+  it('names each region on entry (Lantern Valley, Neon Ward), once per visit, without starting a timed run', () => {
+    const { hud, runs, session } = rig()
+    const start = vi.spyOn(runs, 'start')
+    session.update(frame(at('summit', 0.5)))
+    session.update(frame(at('valley-descent', 0.5)))
+    expect(hud.routeBanner).toHaveBeenLastCalledWith('LANTERN VALLEY')
+    session.update(frame(at('valley-hairpin', 0.5)))
+    expect(hud.routeBanner).toHaveBeenCalledTimes(1)
+    session.update(frame(at('town-aw', 0.5)))
+    session.update(frame(at('city-avenue', 0.5)))
+    expect(hud.routeBanner).toHaveBeenLastCalledWith('NEON WARD')
+    expect(start).not.toHaveBeenCalled()
+  })
+
   it('run time counts only frames the game played: a 10 min background tab adds one clamped frame', () => {
     const { hud, session } = rig()
     session.update(frame(at('summit', 0.5)))

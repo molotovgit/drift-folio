@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { projects } from '../../src/content/projects'
+import { projects, routeNames } from '../../src/content/projects'
 import { BIOMES } from '../../src/world/biomes'
-import { APEX_RADIUS, cornerSpots } from '../../src/world/cornerLayout'
+import { APEX_RADIUS, cornerSpots, placeName } from '../../src/world/cornerLayout'
 import { leftOf } from '../../src/world/roadMesh'
 import { RoadNetwork } from '../../src/world/roadNetwork'
 
@@ -22,6 +22,18 @@ describe('project corners (plan Task 5.1/5.2)', () => {
       else expect(route, s.id).toBe(projects.find((p) => p.id === s.id)!.route)
     }
     expect(perBiome).toEqual({ mountain: 3, temple: 3, city: 3 })
+  })
+
+  it('each card is labelled with the place it stands: its region, or its mountain route', () => {
+    const names: Record<string, string> = { temple: 'Lantern Valley', city: 'Neon Ward' }
+    for (const s of spots) {
+      const route = roads.edge(s.edgeId).route
+      const card = projects.find((p) => p.id === s.id)!
+      expect(placeName(s.id), s.id).toBe(names[route] ?? routeNames[card.route])
+    }
+    expect(placeName('C2')).toBe('Neon Ward')
+    expect(placeName('C5')).toBe('Lantern Valley')
+    expect(placeName('C4')).toBe('Systems Drop')
   })
 
   it('every corner is clear of the other roads: its clip on its own road, its billboard off all asphalt', () => {

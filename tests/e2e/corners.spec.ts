@@ -20,7 +20,7 @@ test.describe('project corners and cards (M5)', () => {
     await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 150_000 })
   })
 
-  test('all nine corners are placed on the mountain', async ({ page }) => {
+  test('all nine corners are placed across the three regions', async ({ page }) => {
     const ids = await page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.corners().map((c) => c.id).sort())
     expect(ids).toEqual(['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
   })
