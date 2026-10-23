@@ -39,3 +39,13 @@ for (const tier of ['high', 'low'] as const) {
     void tel
   })
 }
+
+// The link-preview image (public/og.png, 1200×630): the start view at high quality.
+test('og image', async ({ page }) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 1200, height: 630 })
+  await page.goto('/?debug&catchup&quality=high')
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 60_000 })
+  await page.waitForTimeout(3000)
+  await page.screenshot({ path: 'test-results/shots/og.png' })
+})

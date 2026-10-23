@@ -44,6 +44,8 @@ the maintainers review:
 ```bash
 # from the drift-folio repo
 echo amirbek.is-a.dev > public/CNAME
+# the link-preview image URL in index.html (og:image) moves to the new domain too
+sed -i 's#molotovgit.github.io/drift-folio/og.png#amirbek.is-a.dev/og.png#' index.html
 npm run deploy
 gh api repos/molotovgit/drift-folio/pages -X PUT -f cname=amirbek.is-a.dev
 # wait for the certificate (a few minutes), then:

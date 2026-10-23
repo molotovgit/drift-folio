@@ -41,6 +41,8 @@ html, body { height: 100%; margin: 0; overflow: hidden; background: var(--sky-to
 /* Loading screen (index.html #loading) */
 .loading { position: fixed; inset: 0; z-index: 35; display: grid; place-items: center; background: linear-gradient(180deg, var(--sky-top), var(--sky-mid) 60%, var(--sky-horizon)); transition: opacity .5s }
 .loading.is-done { opacity: 0; pointer-events: none }
+/* `display: grid` above would otherwise beat the hidden attribute set after the fade */
+.loading[hidden] { display: none }
 .loading__inner { width: min(560px, calc(100% - 32px)); display: grid; gap: 10px }
 .loading__eyebrow { margin: 0; color: var(--gold); font: 600 14px/1 var(--font-display); letter-spacing: .12em; text-transform: uppercase }
 .loading__title { margin: 0; font: italic 800 clamp(48px, 12vw, 96px)/.9 var(--font-display) }

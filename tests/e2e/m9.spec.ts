@@ -31,7 +31,10 @@ test.describe('phone, loading and audio (M9)', () => {
 })
 
 test.describe('touch controls', () => {
-  test.use({ ...devices['Pixel 7'], viewport: { width: 915, height: 412 } })
+  // Pixel 7 emulation without its defaultBrowserType (that would force a new worker)
+  const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7']
+  void _browser
+  test.use({ ...pixel, viewport: { width: 915, height: 412 } })
 
   test('a phone gets on-screen controls and the GAS button drives the car', async ({ page }) => {
     test.setTimeout(240_000)
