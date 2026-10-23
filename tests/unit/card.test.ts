@@ -78,6 +78,14 @@ describe('card panel', () => {
     expect(panel.openId).toBeNull()
   })
 
+  it('ignores a key another layer already handled (preventDefault)', () => {
+    const handled = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    handled.preventDefault()
+    panel.show('C4')
+    canvas.dispatchEvent(handled)
+    expect(panel.openId).toBe('C4')
+  })
+
   it('Escape closes; keys are ignored once closed', () => {
     panel.show('C4')
     key('Escape', canvas)

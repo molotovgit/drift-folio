@@ -122,7 +122,8 @@ export class CardPanel {
   }
 
   private handleKey(e: KeyboardEvent): void {
-    if (this.current === null || this.blocked()) return
+    // defaultPrevented: the skip overlay already handled this key (it closes before we see it)
+    if (this.current === null || e.defaultPrevented || this.blocked()) return
     if (e.key === 'Escape') {
       e.preventDefault()
       this.hide()

@@ -33,7 +33,8 @@ export const MAX_MULTIPLIER = 5
 /**
  * A drift only ends after this long without drifting. Shorter gaps (a wobble
  * across the slip threshold) keep the same drift, so they cannot be farmed for
- * multiplier steps.
+ * multiplier steps. `state().drifting` (the HUD's drifting look) therefore
+ * stays on for up to this long after the slide stops.
  */
 export const END_DEBOUNCE = 0.2
 /** absorbs float drift from summing many small dt values */

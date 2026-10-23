@@ -55,7 +55,7 @@ test.describe('project corners and cards (M5)', () => {
     await expect(page.locator('#card-panel')).toBeVisible()
   })
 
-  test('slamming the outside guard rail counts as a crash', async ({ page }) => {
+  test('hitting the outside guard rail registers a crash contact', async ({ page }) => {
     const before = await page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.railHits())
     await page.evaluate(() => {
       const d = (window as unknown as { __drift: Debug }).__drift
@@ -68,5 +68,17 @@ test.describe('project corners and cards (M5)', () => {
       d.launch(25, 0)
     })
     await expect.poll(() => page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.railHits()), { timeout: 20_000 }).toBeGreaterThan(before)
+  })
+
+  test('Escape in the skip overlay closes only the overlay, not the open card', async ({ page }) => {
+    await page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.showCard('C4'))
+    await page.locator('.skip-link').click()
+    await expect(page.locator('#skip-overlay')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#skip-overlay')).toBeHidden()
+    expect(await page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.openCard())).toBe('C4')
+    // with the overlay gone, Escape belongs to the card again
+    await page.keyboard.press('Escape')
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.openCard())).toBeNull()
   })
 })
