@@ -13,6 +13,7 @@ export const palette = {
   terrain: '#6b3a5e',
   terrainShadow: '#4a3060',
   rail: '#cfc6d8',
+  metalDark: '#5a5266',
   carTeal: '#2fb8a8',
   carShadow: '#3a3a7a',
   ink: '#1a1420',
