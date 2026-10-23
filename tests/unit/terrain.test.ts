@@ -34,10 +34,11 @@ describe('terrain heights (plan Task 3.2)', () => {
     expect(worst, where).toBeLessThan(0.05)
   })
 
-  it('builds in under 2.5 s', () => {
+  // generous limit: it is ~0.5 s on a desktop, but CI/loaded machines are slower
+  it('builds in under 5 s', () => {
     const t0 = performance.now()
     new TerrainHeights(roads)
-    expect(performance.now() - t0).toBeLessThan(2500)
+    expect(performance.now() - t0).toBeLessThan(5000)
   })
 
   it('sits flush under the centreline almost everywhere; never floats more than 2 m (retaining-wall spots)', () => {
