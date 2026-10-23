@@ -41,12 +41,12 @@ BODY = tracks({
     "zm": [(-2.07, 0.33), (-1.95, 0.38), (-1.6, 0.46), (-1.2, 0.50), (0, 0.48), (1.2, 0.55), (2.0, 0.58),
            (2.21, 0.60)],
     "wm": [(-2.07, 0.38), (-2.03, 0.54), (-1.97, 0.64), (-1.88, 0.72), (-1.7, 0.80), (-1.5, 0.85),
-           (-1.2, 0.885), (-0.75, 0.855), (-0.2, 0.805), (0.3, 0.815), (0.8, 0.865), (1.2, 0.89),
+           (-1.2, 0.885), (-0.75, 0.855), (-0.2, 0.805), (0.3, 0.815), (0.8, 0.87), (1.2, 0.905),
            (1.7, 0.88), (2.05, 0.845), (2.15, 0.81), (2.21, 0.74)],
     "zbl": [(-2.07, 0.37), (-2.0, 0.45), (-1.85, 0.55), (-1.6, 0.63), (-1.4, 0.67), (-1.2, 0.70),
             (-0.8, 0.70), (-0.3, 0.72), (0.3, 0.74), (0.9, 0.80), (1.3, 0.84), (1.9, 0.86), (2.21, 0.83)],
     "wbl": [(-2.07, 0.34), (-2.02, 0.50), (-1.9, 0.63), (-1.7, 0.74), (-1.5, 0.79), (-1.2, 0.81),
-            (-0.7, 0.80), (0, 0.78), (0.7, 0.80), (1.2, 0.83), (1.8, 0.82), (2.1, 0.78), (2.21, 0.70)],
+            (-0.7, 0.80), (0, 0.78), (0.7, 0.81), (1.2, 0.85), (1.8, 0.82), (2.1, 0.78), (2.21, 0.70)],
     "zf": [(-2.07, 0.39), (-2.02, 0.45), (-1.9, 0.54), (-1.7, 0.64), (-1.5, 0.73), (-1.2, 0.79),
            (-0.8, 0.80), (-0.4, 0.80), (0.3, 0.81), (0.9, 0.87), (1.3, 0.92), (1.9, 0.95), (2.12, 0.94),
            (2.21, 0.90)],
@@ -88,6 +88,16 @@ def surface_z(x, y):
         if x1 <= x <= x0:
             return lerp(z0, z1, (x0 - x) / max(x0 - x1, 1e-6))
     return top[-1][1]
+
+
+def width_at(y, z):
+    """Outer half-width of the body cross-section at height z."""
+    pts = body_half(y)
+    best = 0.0
+    for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+        if min(z0, z1) <= z <= max(z0, z1):
+            best = max(best, lerp(x0, x1, (z - z0) / ((z1 - z0) or 1e-6)))
+    return best
 
 
 def front_y(x, z):
@@ -215,16 +225,21 @@ def cyl_y(x, y, z, r, depth, mi, sx=1.0, sz=1.0, segs=16):
 
 
 for sx in (-1, 1):
-    # pop-up headlights, raised: paint pod with a glowing lens facing forward
-    hx, hy = sx * 0.565, -1.60
-    hz = surface_z(abs(hx), hy)
-    part((hx, hy, hz + 0.065), (0.38, 0.17, 0.16), PAINT, rot_x=-0.08)
-    part((hx, hy - 0.087, hz + 0.07), (0.33, 0.02, 0.11), HEAD, rot_x=-0.08)
-    part((hx, hy + 0.02, hz + 0.152), (0.39, 0.19, 0.012), INK, rot_x=-0.08)  # pod lid seam
-    part((hx, hy + 0.01, hz - 0.005), (0.35, 0.16, 0.04), INK)  # hinge gap under the pod
-    # mirrors
-    part((sx * 0.76, -0.30, 0.895), (0.14, 0.04, 0.025), INK)
-    part((sx * 0.86, -0.30, 0.925), (0.10, 0.07, 0.075), INK)
+    # pop-up headlights, raised: a paint pod whose base is sunk into the bonnet, tilted up
+    # about a hinge on its rear edge, with a glowing lens on the front face
+    hx, hy, pw, pd = sx * 0.53, -1.60, 0.32, 0.17
+    foot = [surface_z(abs(hx) + dx, hy + dy) for dx in (-pw / 2, 0, pw / 2) for dy in (-pd / 2, pd / 2)]
+    zlo, ztop = min(foot) - 0.03, max(foot) + 0.10
+    ph = ztop - zlo
+    pod = part((hx, hy, zlo + ph / 2), (pw, pd, ph), PAINT)
+    pod += part((hx, hy - pd / 2 - 0.008, ztop - 0.055), (pw - 0.05, 0.02, 0.085), HEAD)
+    pod += part((hx, hy, ztop + 0.004), (pw + 0.01, pd + 0.01, 0.012), INK)  # lid seam
+    rot_verts(pod, -0.12, "X", (hx, hy + pd / 2, zlo + 0.03))  # hinge at the rear edge
+    # mirrors on stalks rooted in the door top at the A-pillar base
+    my = -0.34
+    mx = width_at(my, 0.78)
+    part((sx * (mx + 0.02), my, 0.80), (0.14, 0.04, 0.045), INK)
+    part((sx * (mx + 0.115), my, 0.835), (0.10, 0.065, 0.075), INK)
     # side skirts
     part((sx * 0.775, 0.0, 0.17), (0.06, 1.66, 0.07), SHADOW)
     # front fender vents behind the front wheel
@@ -240,7 +255,6 @@ for sx in (-1, 1):
     cyl_y(sx * 0.30, 2.18, 0.33, 0.045, 0.14, INK, segs=12)
 
 part((0, 2.205, 0.745), (1.30, 0.04, 0.17), INK)        # tail light band
-part((0, -1.05, surface_z(0.0, -1.05) + 0.004), (0.30, 0.14, 0.03), INK, rot_x=0.12)  # hood vent
 part((0, 1.99, 1.175), (1.66, 0.30, 0.035), PAINT, rot_x=-0.07)  # full width wing
 part((0, 1.88, 1.19), (1.66, 0.05, 0.02), INK, rot_x=-0.07)   # wing leading edge trim
 part((0, -1.84, 0.145), (1.20, 0.20, 0.022), INK)        # front splitter
@@ -292,3 +306,4 @@ finish("fd", 25000, size_range=((1.6, 4.0, 1.0), (1.95, 4.6, 1.45)),
 out = args()["preview"]
 preview("fd_hero", out, angles=(35,), elevation=6)
 preview("fd_view", out, angles=(0, 90, 180), elevation=2)
+preview("fd_left", out, angles=(320,), elevation=14)
