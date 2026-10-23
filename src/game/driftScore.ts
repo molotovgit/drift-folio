@@ -30,6 +30,12 @@ export const MAX_DT = 1 / 30
 export const CHAIN_WINDOW = 1.5
 export const BANK_DELAY = 2.0
 export const MAX_MULTIPLIER = 5
+/**
+ * A drift only ends after this long without drifting. Shorter gaps (a wobble
+ * across the slip threshold) keep the same drift, so they cannot be farmed for
+ * multiplier steps.
+ */
+export const END_DEBOUNCE = 0.2
 /** absorbs float drift from summing many small dt values */
 const EPS = 1e-9
 
@@ -43,6 +49,8 @@ export class DriftScore {
   private multiplier = 1
   private banked = 0
   private drifting = false
+  /** seconds without drift inside the current drift (debounce of its end) */
+  private gap = 0
   /** seconds since the last drift ended; Infinity = no drift to chain from */
   private sinceEnd = Infinity
 
@@ -54,11 +62,13 @@ export class DriftScore {
       if (this.running > 0) events.push({ type: 'crash', value: this.running })
       this.breakChain()
       this.drifting = false
+      this.gap = 0
       return events
     }
 
     if (i.drifting) {
       if (!this.drifting) this.startDrift(events)
+      this.gap = 0
       const slip = Math.abs(i.slipDeg)
       const speed = Math.max(0, i.speed)
       if (Number.isFinite(slip) && Number.isFinite(speed)) this.running += slip * speed * dt * this.multiplier
@@ -66,10 +76,15 @@ export class DriftScore {
     }
 
     if (this.drifting) {
+      this.gap += dt
+      if (this.gap < END_DEBOUNCE - EPS) return events
+      // the drift really ended when the gap began
       this.drifting = false
-      this.sinceEnd = 0
+      this.sinceEnd = this.gap
+      this.gap = 0
+    } else {
+      this.sinceEnd += dt
     }
-    this.sinceEnd += dt
     if (this.sinceEnd >= BANK_DELAY - EPS && (this.running > 0 || this.multiplier > 1)) {
       const amount = this.running
       this.banked += amount
@@ -87,6 +102,7 @@ export class DriftScore {
     this.breakChain()
     this.banked = 0
     this.drifting = false
+    this.gap = 0
   }
 
   /** A new drift begins: chain the multiplier if the last one ended recently enough. */

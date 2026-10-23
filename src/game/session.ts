@@ -1,3 +1,4 @@
+import { MAX_FRAME } from '../core/loop'
 import { routeNames, type RouteId } from '../content/projects'
 import type { Hud } from '../ui/hud'
 import type { Telemetry } from '../vehicle/driftCar'
@@ -25,9 +26,8 @@ const ROUTE_SNAP = 14
 
 export interface SessionInput {
   t: Telemetry
+  /** frame time, seconds (the caller skips paused frames) */
   dt: number
-  /** seconds, monotonic (performance.now()/1000) */
-  now: number
   /** the chassis hit a guard rail hard this frame */
   railHit: boolean
   /** inside a shortcut zone where off-road driving is allowed (S2 riverbed, M7) */
@@ -44,6 +44,11 @@ export class DriftSession {
   private currentRoute: RoadRoute | null = null
   private runRoute: RunRouteId | null = null
   private bankedAtRunStart = 0
+  /**
+   * Seconds of play: the sum of frame times clamped like the physics loop, so
+   * run times match simulated time and a pause or a background tab never counts.
+   */
+  private clock = 0
 
   constructor(
     private readonly roads: RoadNetwork | null,
@@ -57,10 +62,12 @@ export class DriftSession {
   }
 
   update(i: SessionInput): void {
-    const offRoadCrash = this.runs.offRoad(i.t.onRoad, i.dt, i.inShortcutZone)
+    this.clock += Math.min(Math.max(Number.isFinite(i.dt) ? i.dt : 0, 0), MAX_FRAME)
+    // airborne (a jump) is not off-road: the timer only runs with wheels on the ground
+    const offRoadCrash = this.runs.offRoad(i.t.onRoad || i.t.wheelsOnGround === 0, i.dt, i.inShortcutZone)
     const events = this.score.step({ drifting: i.t.drifting, slipDeg: i.t.slipDeg, speed: i.t.speed, dt: i.dt, crashed: i.railHit || offRoadCrash })
     for (const e of events) this.hud.event(e)
-    this.trackRoute(i.t, i.now)
+    this.trackRoute(i.t, this.clock)
     this.hud.update(this.score.state(), i.t.speed)
   }
 
@@ -78,6 +85,8 @@ export class DriftSession {
 
     const runRoute = RUN_ROUTE[route]
     if (previous === 'summit' && runRoute) this.startRun(runRoute, now)
+    // the run counts for the themed route the car is actually on (forks, shortcuts)
+    else if (this.runRoute && runRoute) this.runRoute = runRoute
     if (route === 'town' && this.runRoute) this.finishRun(now)
     if (route === 'summit' || route === 'return') this.runRoute = null // went back up: abandon
   }

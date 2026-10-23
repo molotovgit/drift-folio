@@ -92,13 +92,20 @@ export class ProjectCorners {
     ProjectCorners.fitText(g, card.title.toUpperCase(), 56, 220, PANEL_W - 112, 116, `italic 800`)
 
     g.font = `600 34px ${DISPLAY_FONT}`
+    // chips wrap onto a second row; whatever does not fit there is left off
     let x = 56
+    let y = 300
     for (const s of card.stack) {
       const w = g.measureText(s.toUpperCase()).width + 32
+      if (x + w > PANEL_W - 56) {
+        x = 56
+        y += 66
+        if (y + 52 > PANEL_H - 110) break
+      }
       g.fillStyle = 'rgba(255, 92, 138, 0.28)'
-      g.fillRect(x, 300, w, 52)
+      g.fillRect(x, y, w, 52)
       g.fillStyle = palette.hudText
-      g.fillText(s.toUpperCase(), x + 16, 338)
+      g.fillText(s.toUpperCase(), x + 16, y + 38)
       x += w + 14
     }
 

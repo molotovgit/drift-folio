@@ -165,4 +165,24 @@ describe('driftScore', () => {
     s.reset()
     expect(s.state()).toEqual({ running: 0, multiplier: 1, banked: 0, drifting: false })
   })
+
+  it('a wobble across the slip threshold is one drift: no multiplier farming', () => {
+    const s = new DriftScore()
+    const events: ScoreEvent[] = []
+    for (let k = 0; k < 10; k++) {
+      events.push(...run(s, 0.3, DRIFT))
+      events.push(...run(s, 0.1, IDLE))
+    }
+    expect(events.filter((e) => e.type === 'multiplier')).toEqual([])
+    expect(s.state().multiplier).toBe(1)
+    expect(s.state().drifting).toBe(true)
+  })
+
+  it('the chain window counts from when the drift really ended, not from the debounce', () => {
+    const s = new DriftScore()
+    run(s, 1, DRIFT)
+    run(s, 1.4, IDLE)
+    s.step(DRIFT)
+    expect(s.state().multiplier).toBe(2)
+  })
 })

@@ -6,10 +6,9 @@ import { PropPlacer } from './dressing'
 import { GuardRails } from './guardRails'
 import { InstancedProps, placeMatrix } from './instancedProps'
 import { lampSpots, landmarks, treeKeepOut, treeSpots } from './mountainLayout'
-import { signTexture } from './projectCorners'
-import { ToonMaterials } from '../render/toon'
 import { RoadMesh } from './roadMesh'
 import { RoadNetwork } from './roadNetwork'
+import { Signposts } from './signposts'
 import { TerrainHeights } from './terrain'
 import { TerrainCollider } from './terrainCollider'
 import { TerrainMesh } from './terrainMesh'
@@ -27,6 +26,8 @@ export class MountainWorld {
   readonly start: Checkpoint
   readonly rails: GuardRails
   readonly terrainCollider: TerrainCollider
+  /** route signs at the two forks */
+  readonly signposts: Signposts
   private lampAnchors: THREE.Vector3[] = []
   /** culled instanced props (forest, lamps), re-culled every frame from the camera */
   private readonly instanced: InstancedProps[] = []
@@ -39,6 +40,7 @@ export class MountainWorld {
     this.terrainCollider = new TerrainCollider(world, this.terrain)
     scene.add(new TerrainMesh(this.terrain).mesh)
     scene.add(new RoadMesh(this.roads, world).group)
+    this.signposts = new Signposts(this.roads)
     this.rails = new GuardRails(this.roads, world)
     scene.add(this.rails.group)
 
@@ -84,23 +86,13 @@ export class MountainWorld {
     ])
     for (const p of [lampProps, ...forest]) {
       if (!(p instanceof InstancedProps)) {
-        this.labelSignposts(p)
+        this.signposts.label(p)
         continue
       }
       this.scene.add(p.group)
       this.instanced.push(p)
     }
     this.lampAnchors = await this.bulbPositions(lamps)
-  }
-
-  /** Paint the route names onto every signpost's three boards. */
-  private labelSignposts(landmarkGroup: THREE.Group): void {
-    const labels = ['AUTOMATION PASS', 'PLATFORM RIDGE', 'SYSTEMS DROP']
-    const mats = labels.map((l) => ToonMaterials.create({ color: '#ffffff', map: signTexture(l), flatShading: false, bands: 2 }))
-    landmarkGroup.traverse((o) => {
-      const m = /^sign_(\d)$/.exec(o.name)
-      if (m && (o as THREE.Mesh).isMesh) (o as THREE.Mesh).material = mats[Number(m[1])] ?? mats[0]
-    })
   }
 
   /** The bulb sits at the lamp model's `light_anchor`; transform it to each lamp. */

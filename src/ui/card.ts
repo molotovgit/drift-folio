@@ -1,5 +1,6 @@
 import { projects, routeNames, type CardId, type ProjectCard } from '../content/projects'
 import '../styles/card.css'
+import { skipOverlay } from './skip'
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)
@@ -19,7 +20,8 @@ const BY_ID = new Map<CardId, ProjectCard>(projects.map((p) => [p.id, p]))
 /**
  * In-game project card that slides in when a corner opens. Non-modal: it never
  * takes focus, so driving keeps working. While open, Escape closes it and
- * Enter opens the GitHub link of a public project in a new tab.
+ * Enter opens the GitHub link of a public project in a new tab. Both keys
+ * belong to the skip overlay while it is open over the game.
  */
 export class CardPanel {
   private readonly panel: HTMLElement
@@ -36,7 +38,14 @@ export class CardPanel {
   // bound once so add/removeEventListener match
   private readonly onKey = (e: KeyboardEvent) => this.handleKey(e)
 
-  constructor(root: HTMLElement) {
+  /**
+   * @param root element the panel is appended to
+   * @param blocked true while another layer owns the keyboard (default: the skip overlay)
+   */
+  constructor(
+    root: HTMLElement,
+    private readonly blocked: () => boolean = () => skipOverlay.isOpen,
+  ) {
     this.panel = el('aside', 'cardp')
     this.panel.id = 'card-panel'
     this.panel.setAttribute('role', 'dialog')
@@ -85,7 +94,8 @@ export class CardPanel {
     this.title.textContent = p.title
     this.blurb.textContent = p.blurb
     this.chips.replaceChildren(...p.stack.map((s) => el('li', '', s)))
-    this.url = p.public && p.url ? p.url : null
+    // only GitHub links are ever opened from a card
+    this.url = p.public && p.url?.startsWith('https://github.com/') ? p.url : null
     if (this.url) this.link.href = this.url
     else this.link.removeAttribute('href')
     this.link.hidden = !this.url
@@ -112,7 +122,7 @@ export class CardPanel {
   }
 
   private handleKey(e: KeyboardEvent): void {
-    if (this.current === null) return
+    if (this.current === null || this.blocked()) return
     if (e.key === 'Escape') {
       e.preventDefault()
       this.hide()
@@ -127,8 +137,8 @@ export class CardPanel {
   /** A mouse click on the close button or link focuses it; hand focus back to driving. */
   private returnFocusToGame(): void {
     if (!this.panel.contains(document.activeElement)) return
-    const scene = document.getElementById('scene')
-    if (scene) scene.focus({ preventScroll: true })
-    else (document.activeElement as HTMLElement | null)?.blur()
+    // the canvas has tabindex="-1" so it can take focus; blur is the fallback
+    document.getElementById('scene')?.focus({ preventScroll: true })
+    if (this.panel.contains(document.activeElement)) (document.activeElement as HTMLElement).blur()
   }
 }

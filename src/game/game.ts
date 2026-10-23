@@ -61,6 +61,8 @@ export class Game {
   /** Rapier reports chassis contacts above the force threshold here (crash rule) */
   private readonly events = new RAPIER.EventQueue(true)
   private railHit = false
+  /** hard rail hits since load (debug telemetry) */
+  private railHits = 0
 
   private constructor(
     private readonly engine: Engine,
@@ -93,8 +95,9 @@ export class Game {
     this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
     const hudRoot = document.querySelector<HTMLElement>('#hud')!
     this.hud = new Hud(hudRoot)
-    this.cards = new CardPanel(hudRoot)
-    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(new SafeStorage('drift-folio')))
+    // outside the aria-live HUD, so a whole card is not read out on every open
+    this.cards = new CardPanel(document.body)
+    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(new SafeStorage('drift-folio:')))
     this.corners = this.mountain ? new ProjectCorners(scene, this.mountain.roads) : null
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
@@ -137,7 +140,10 @@ export class Game {
     this.world.step(this.events)
     // a hard chassis contact with a guard rail is a crash (spec §8)
     this.events.drainContactForceEvents((e) => {
-      if (surfaceOf.get(e.collider1()) === 'rail' || surfaceOf.get(e.collider2()) === 'rail') this.railHit = true
+      if (surfaceOf.get(e.collider1()) === 'rail' || surfaceOf.get(e.collider2()) === 'rail') {
+        if (!this.railHit) this.railHits++
+        this.railHit = true
+      }
     })
     this.car.wheels().forEach((w, i) => this.skids.step(i, w.contact ? w.contactPoint : null, w.slide))
   }
@@ -156,8 +162,9 @@ export class Game {
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
     if (!paused) {
       if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
-      this.session.update({ t, dt, now: performance.now() / 1000, railHit: this.railHit, inShortcutZone: false })
+      this.session.update({ t, dt, railHit: this.railHit, inShortcutZone: false })
       this.railHit = false
+      this.mountain?.signposts.update(t)
       const corner = this.corners?.update(t)
       if (corner?.opened) this.cards.show(corner.opened)
       else if (corner?.hinted) this.hud.hint('Drift this corner to open the card')
@@ -255,8 +262,20 @@ export class Game {
       score: () => this.session.score.state(),
       openCard: () => this.cards.openId,
       showCard: (id: string) => this.cards.show(id as never),
-      corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index })) ?? [],
+      corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index, clip: s.clip, turn: s.turn })) ?? [],
       route: () => this.session.route,
+      railHits: () => this.railHits,
+      /** drop the car at (x, z) on the ground, facing `yaw` */
+      teleportTo: (x: number, z: number, yaw = 0) => {
+        const y = this.mountain ? this.mountain.heightAt(x, z) + 0.15 : 0
+        this.car.resetTo({ x, y, z }, yaw)
+        this.camera.snap()
+      },
+      /** give the car `speed` m/s along its heading turned by `slipDeg` (left positive): an instant slide */
+      launch: (speed: number, slipDeg = 0) => {
+        const yaw = this.car.telemetry().yaw + (slipDeg * Math.PI) / 180
+        this.car.body.setLinvel({ x: Math.sin(yaw) * speed, y: 0, z: Math.cos(yaw) * speed }, true)
+      },
     }
   }
 }

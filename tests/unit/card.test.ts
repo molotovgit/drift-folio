@@ -10,15 +10,17 @@ describe('card panel', () => {
   let canvas: HTMLCanvasElement
   let panel: CardPanel
   let open: ReturnType<typeof vi.fn>
+  let overlayOpen: boolean
 
   beforeEach(() => {
-    document.body.innerHTML = '<canvas id="scene" tabindex="0"></canvas><div id="hud"></div>'
+    document.body.innerHTML = '<canvas id="scene" tabindex="-1"></canvas><div id="hud"></div>'
     canvas = document.getElementById('scene') as HTMLCanvasElement
     root = document.getElementById('hud')!
     canvas.focus()
     open = vi.fn()
     vi.stubGlobal('open', open)
-    panel = new CardPanel(root)
+    overlayOpen = false
+    panel = new CardPanel(root, () => overlayOpen)
   })
   afterEach(() => {
     panel.dispose()
@@ -62,6 +64,18 @@ describe('card panel', () => {
   it('does not steal focus from the canvas', () => {
     panel.show('C5')
     expect(document.activeElement).toBe(canvas)
+  })
+
+  it('while the skip overlay is open, Enter and Escape belong to it', () => {
+    panel.show('C4')
+    overlayOpen = true
+    key('Escape', canvas)
+    key('Enter', canvas)
+    expect(panel.openId).toBe('C4')
+    expect(open).not.toHaveBeenCalled()
+    overlayOpen = false
+    key('Escape', canvas)
+    expect(panel.openId).toBeNull()
   })
 
   it('Escape closes; keys are ignored once closed', () => {

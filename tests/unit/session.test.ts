@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DriftSession, formatTime } from '../../src/game/session'
+import { DriftSession, formatTime, type SessionInput } from '../../src/game/session'
 import { RouteRuns } from '../../src/game/routeRun'
 import { SafeStorage } from '../../src/util/storage'
 import { RoadNetwork } from '../../src/world/roadNetwork'
@@ -21,22 +21,51 @@ const at = (edgeId: string, frac: number, extra: Partial<Telemetry> = {}): Telem
   return { pos: { ...p }, heading: { x: 0, y: 1 }, vel: { x: 0, y: 0, z: 0 }, speed: 20, slipDeg: 0, drifting: false, wheelsOnGround: 4, onRoad: true, yaw: 0, throttle: 1, ...extra }
 }
 
+/** One frame of input; `dt` defaults to 1/60 s. */
+const frame = (t: Telemetry, extra: Partial<SessionInput> = {}): SessionInput => ({ t, dt: 1 / 60, railHit: false, inShortcutZone: false, ...extra })
+/** Drive `seconds` of 1/30 s frames at `t`. */
+function hold(session: DriftSession, t: Telemetry, seconds: number, extra: Partial<SessionInput> = {}): void {
+  for (let i = 0; i < Math.round(seconds * 30); i++) session.update(frame(t, { dt: 1 / 30, ...extra }))
+}
+
 describe('DriftSession', () => {
   it('shows a banner when entering a themed route and times the run to town', () => {
     const { hud, session } = rig()
-    session.update({ t: at('summit', 0.5), dt: 1 / 60, now: 0, railHit: false, inShortcutZone: false })
-    session.update({ t: at('systems-a', 0.3), dt: 1 / 60, now: 1, railHit: false, inShortcutZone: false })
+    session.update(frame(at('summit', 0.5)))
+    session.update(frame(at('systems-a', 0.3)))
     expect(hud.routeBanner).toHaveBeenCalledWith('SYSTEMS DROP')
-    session.update({ t: at('town-ps', 0.5), dt: 1 / 60, now: 73.4, railHit: false, inShortcutZone: false })
+    hold(session, at('systems-a', 0.3), 72.4)
+    session.update(frame(at('town-ps', 0.5)))
     expect(hud.hint).toHaveBeenCalledWith(expect.stringMatching(/^Systems Drop: 1:12\.4 · \d+ pts · new best$/))
+  })
+
+  it('run time counts only frames the game played: a 10 min background tab adds one clamped frame', () => {
+    const { hud, session } = rig()
+    session.update(frame(at('summit', 0.5)))
+    session.update(frame(at('systems-a', 0.3)))
+    hold(session, at('systems-a', 0.3), 30)
+    session.update(frame(at('systems-a', 0.3), { dt: 600 }))
+    session.update(frame(at('town-ps', 0.5)))
+    expect(hud.hint).toHaveBeenCalledWith(expect.stringMatching(/^Systems Drop: 0:30\.\d · /))
+  })
+
+  it('credits the route the car really drives after Fork 1, not the first one it brushed', () => {
+    const { hud, runs, session } = rig()
+    session.update(frame(at('summit', 0.5)))
+    session.update(frame(at('platform', 0.05)))
+    session.update(frame(at('automation', 0.5)))
+    session.update(frame(at('town-ap', 0.5)))
+    expect(hud.hint).toHaveBeenCalledWith(expect.stringMatching(/^Automation Pass: /))
+    expect(runs.best('automation')).not.toBeNull()
+    expect(runs.best('platform')).toBeNull()
   })
 
   it('a hard rail hit crashes the running drift score', () => {
     const { hud, session } = rig()
     const drifting = at('summit', 0.5, { drifting: true, slipDeg: 30 })
-    for (let i = 0; i < 30; i++) session.update({ t: drifting, dt: 1 / 60, now: i / 60, railHit: false, inShortcutZone: false })
+    for (let i = 0; i < 30; i++) session.update(frame(drifting))
     expect(session.score.state().running).toBeGreaterThan(0)
-    session.update({ t: drifting, dt: 1 / 60, now: 1, railHit: true, inShortcutZone: false })
+    session.update(frame(drifting, { railHit: true }))
     expect(session.score.state().running).toBe(0)
     expect(hud.event).toHaveBeenCalledWith(expect.objectContaining({ type: 'crash' }))
   })
@@ -45,9 +74,16 @@ describe('DriftSession', () => {
     const offRoad = at('summit', 0.5, { drifting: true, slipDeg: 30, onRoad: false })
     for (const zone of [false, true]) {
       const { session } = rig()
-      for (let i = 0; i < 90; i++) session.update({ t: offRoad, dt: 1 / 60, now: i / 60, railHit: false, inShortcutZone: zone })
+      for (let i = 0; i < 90; i++) session.update(frame(offRoad, { inShortcutZone: zone }))
       expect(session.score.state().running > 0, `zone=${zone}`).toBe(zone)
     }
+  })
+
+  it('time in the air (a jump) is not off-road', () => {
+    const { session } = rig()
+    const airborne = at('summit', 0.5, { drifting: true, slipDeg: 30, onRoad: false, wheelsOnGround: 0 })
+    for (let i = 0; i < 90; i++) session.update(frame(airborne))
+    expect(session.score.state().running).toBeGreaterThan(0)
   })
 
   it('formats run times as m:ss.t', () => {
