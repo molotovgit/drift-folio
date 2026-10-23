@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { idleControls, type ControlState } from '../../src/core/input'
 import { PHYSICS_STEP } from '../../src/core/loop'
-import { createDriftCar, type DriftCar } from '../../src/vehicle/driftCar'
+import { DriftCar } from '../../src/vehicle/driftCar'
 
 beforeAll(async () => {
   await RAPIER.init()
@@ -12,7 +12,7 @@ function rig() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
   world.timestep = PHYSICS_STEP
   world.createCollider(RAPIER.ColliderDesc.cuboid(2000, 0.5, 2000).setTranslation(0, -0.5, 0).setFriction(0.9))
-  const car = createDriftCar(world, { x: 0, y: 0, z: 0 }, 0)
+  const car = new DriftCar(world, { x: 0, y: 0, z: 0 }, 0)
   const run = (seconds: number, c: Partial<ControlState>, sample?: (car: DriftCar) => void) => {
     const ctrl = { ...idleControls(), ...c }
     for (let i = 0; i < Math.round(seconds / PHYSICS_STEP); i++) {

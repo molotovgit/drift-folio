@@ -3,25 +3,30 @@ import { attribute } from 'three/tsl'
 import type { Vec3 } from '../core/math'
 
 export const SKID_CAPACITY = 4000
+/** Below this tyre slide amount no mark is laid. */
+const SKID_MIN_SLIDE = 0.45
+/** Minimum stroke length before a new quad is written, metres. */
+const SKID_MIN_STEP = 0.25
+const SKID_HALF_WIDTH = 0.11
+/** Lift above the contact point to avoid z-fighting with the road. */
+const SKID_LIFT = 0.03
 
 /**
- * Ring buffer of skid-mark quads. Each wheel draws a continuous strip while it
- * slides; the oldest quads are overwritten once the buffer is full.
+ * Ring buffer of skid-mark quads (4 vertices each). The oldest quads are
+ * overwritten once the buffer is full. Pure data: unit-testable without a GPU.
  */
 export class SkidBuffer {
-  readonly capacity: number
-  private next = 0
-  private filled = 0
   readonly positions: Float32Array
   readonly alphas: Float32Array
+  private next = 0
+  private filled = 0
 
-  constructor(capacity = SKID_CAPACITY) {
-    this.capacity = capacity
+  constructor(readonly capacity = SKID_CAPACITY) {
     this.positions = new Float32Array(capacity * 4 * 3)
     this.alphas = new Float32Array(capacity * 4)
   }
 
-  get count() {
+  get count(): number {
     return this.filled
   }
 
@@ -33,10 +38,11 @@ export class SkidBuffer {
     const nx = (-dz / l) * w
     const nz = (dx / l) * w
     const slot = this.next
-    const p = this.positions
-    const o = slot * 12
-    const y = 0.03
-    p.set([a.x + nx, a.y + y, a.z + nz, a.x - nx, a.y + y, a.z - nz, b.x - nx, b.y + y, b.z - nz, b.x + nx, b.y + y, b.z + nz], o)
+    const y = SKID_LIFT
+    this.positions.set(
+      [a.x + nx, a.y + y, a.z + nz, a.x - nx, a.y + y, a.z - nz, b.x - nx, b.y + y, b.z - nz, b.x + nx, b.y + y, b.z + nz],
+      slot * 12,
+    )
     this.alphas.fill(alpha, slot * 4, slot * 4 + 4)
     this.next = (this.next + 1) % this.capacity
     this.filled = Math.min(this.filled + 1, this.capacity)
@@ -44,64 +50,74 @@ export class SkidBuffer {
   }
 }
 
-export function createSkids(scene: THREE.Scene, capacity = SKID_CAPACITY) {
-  const buf = new SkidBuffer(capacity)
-  const geo = new THREE.BufferGeometry()
-  const posAttr = new THREE.BufferAttribute(buf.positions, 3)
-  posAttr.setUsage(THREE.DynamicDrawUsage)
-  const alphaAttr = new THREE.BufferAttribute(buf.alphas, 1)
-  alphaAttr.setUsage(THREE.DynamicDrawUsage)
-  geo.setAttribute('position', posAttr)
-  geo.setAttribute('skidAlpha', alphaAttr)
-  const idx = new Uint32Array(capacity * 6)
-  for (let i = 0; i < capacity; i++) idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6)
-  geo.setIndex(new THREE.BufferAttribute(idx, 1))
-  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6)
+/**
+ * Skid marks: one dynamic mesh fed by a SkidBuffer. Each wheel draws a
+ * continuous strip while it slides; only freshly written slots are uploaded.
+ */
+export class SkidMarks {
+  readonly buffer: SkidBuffer
+  private readonly geometry = new THREE.BufferGeometry()
+  private readonly positionAttr: THREE.BufferAttribute
+  private readonly alphaAttr: THREE.BufferAttribute
+  private readonly lastPoint: (Vec3 | null)[] = [null, null, null, null]
+  private dirty = false
+  private dirtyLo = Infinity
+  private dirtyHi = -1
 
-  const mat = new THREE.MeshBasicNodeMaterial({ color: '#07030a', transparent: true, depthWrite: false })
-  mat.opacityNode = attribute('skidAlpha', 'float')
-  mat.polygonOffset = true
-  mat.polygonOffsetFactor = -2
-  const mesh = new THREE.Mesh(geo, mat)
-  mesh.frustumCulled = false
-  mesh.renderOrder = 1
-  scene.add(mesh)
+  constructor(scene: THREE.Scene, capacity = SKID_CAPACITY) {
+    this.buffer = new SkidBuffer(capacity)
+    this.positionAttr = new THREE.BufferAttribute(this.buffer.positions, 3).setUsage(THREE.DynamicDrawUsage)
+    this.alphaAttr = new THREE.BufferAttribute(this.buffer.alphas, 1).setUsage(THREE.DynamicDrawUsage)
+    this.geometry.setAttribute('position', this.positionAttr)
+    this.geometry.setAttribute('skidAlpha', this.alphaAttr)
+    const index = new Uint32Array(capacity * 6)
+    for (let i = 0; i < capacity; i++) index.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6)
+    this.geometry.setIndex(new THREE.BufferAttribute(index, 1))
+    this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6)
+    this.geometry.setDrawRange(0, 0)
 
-  const last: (Vec3 | null)[] = [null, null, null, null]
-  let dirty = false
-  let lo = Infinity
-  let hi = -1
+    const material = new THREE.MeshBasicNodeMaterial({ color: '#07030a', transparent: true, depthWrite: false })
+    material.opacityNode = attribute('skidAlpha', 'float')
+    material.polygonOffset = true
+    material.polygonOffsetFactor = -2
+    const mesh = new THREE.Mesh(this.geometry, material)
+    mesh.frustumCulled = false
+    mesh.renderOrder = 1
+    scene.add(mesh)
+  }
 
-  return {
-    buffer: buf,
-    /** call once per physics step with each wheel's contact and slide amount */
-    step(wheel: number, contact: Vec3 | null, slide: number) {
-      if (!contact || slide < 0.45) {
-        last[wheel] = null
-        return
-      }
-      const prev = last[wheel]
-      if (prev && Math.hypot(contact.x - prev.x, contact.z - prev.z) > 0.25) {
-        const slot = buf.add(prev, contact, 0.11, Math.min(0.85, 0.35 + slide * 0.55))
-        lo = Math.min(lo, slot)
-        hi = Math.max(hi, slot)
-        last[wheel] = { ...contact }
-        dirty = true
-      } else if (!prev) last[wheel] = { ...contact }
-    },
-    flush() {
-      if (!dirty) return
-      // upload only the slots written since the last flush (ring wrap → whole range)
-      posAttr.clearUpdateRanges()
-      alphaAttr.clearUpdateRanges()
-      posAttr.addUpdateRange(lo * 12, (hi - lo + 1) * 12)
-      alphaAttr.addUpdateRange(lo * 4, (hi - lo + 1) * 4)
-      posAttr.needsUpdate = true
-      alphaAttr.needsUpdate = true
-      geo.setDrawRange(0, buf.count * 6)
-      dirty = false
-      lo = Infinity
-      hi = -1
-    },
+  /** Call once per physics tick with each wheel's contact point and slide amount. */
+  step(wheel: number, contact: Vec3 | null, slide: number): void {
+    if (!contact || slide < SKID_MIN_SLIDE) {
+      this.lastPoint[wheel] = null
+      return
+    }
+    const prev = this.lastPoint[wheel]
+    if (!prev) {
+      this.lastPoint[wheel] = { ...contact }
+      return
+    }
+    if (Math.hypot(contact.x - prev.x, contact.z - prev.z) <= SKID_MIN_STEP) return
+    const slot = this.buffer.add(prev, contact, SKID_HALF_WIDTH, Math.min(0.85, 0.35 + slide * 0.55))
+    this.dirtyLo = Math.min(this.dirtyLo, slot)
+    this.dirtyHi = Math.max(this.dirtyHi, slot)
+    this.lastPoint[wheel] = { ...contact }
+    this.dirty = true
+  }
+
+  /** Upload what changed (once per rendered frame); a ring wrap uploads the whole span. */
+  flush(): void {
+    if (!this.dirty) return
+    const count = this.dirtyHi - this.dirtyLo + 1
+    this.positionAttr.clearUpdateRanges()
+    this.alphaAttr.clearUpdateRanges()
+    this.positionAttr.addUpdateRange(this.dirtyLo * 12, count * 12)
+    this.alphaAttr.addUpdateRange(this.dirtyLo * 4, count * 4)
+    this.positionAttr.needsUpdate = true
+    this.alphaAttr.needsUpdate = true
+    this.geometry.setDrawRange(0, this.buffer.count * 6)
+    this.dirty = false
+    this.dirtyLo = Infinity
+    this.dirtyHi = -1
   }
 }

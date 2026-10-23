@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu'
-import { createContextGuard } from './contextGuard'
+import { ContextGuard } from './contextGuard'
 
 export type GpuTier = 'webgpu' | 'webgl2' | 'none'
 
@@ -7,13 +7,10 @@ export interface GpuNavigator {
   gpu?: { requestAdapter: () => Promise<unknown | null> }
 }
 
-/** Decide which rendering backend the device can run. */
+/** Decide which rendering backend the device can run: WebGPU, then WebGL2, else none. */
 export async function detectGpu(nav: GpuNavigator, canvas: HTMLCanvasElement): Promise<GpuTier> {
   try {
-    if (nav.gpu) {
-      const adapter = await nav.gpu.requestAdapter()
-      if (adapter) return 'webgpu'
-    }
+    if (nav.gpu && (await nav.gpu.requestAdapter())) return 'webgpu'
   } catch {
     /* fall through to WebGL2 */
   }
@@ -25,84 +22,100 @@ export async function detectGpu(nav: GpuNavigator, canvas: HTMLCanvasElement): P
   return 'none'
 }
 
-export interface Engine {
-  renderer: THREE.WebGPURenderer
-  scene: THREE.Scene
-  camera: THREE.PerspectiveCamera
-  tier: GpuTier
-  isMobile: boolean
-  onFrame(cb: (dt: number, time: number) => void): void
-  /** Fires once when the GPU context is lost and has not come back within 3 s. */
-  onContextLost(cb: () => void): void
-  setPixelRatioCap(cap: number): void
-  dispose(): void
-}
-
 export function isMobileDevice(): boolean {
   return matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad/i.test(navigator.userAgent)
 }
 
-export async function createEngine(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>): Promise<Engine> {
-  const isMobile = isMobileDevice()
-  let dprCap = isMobile ? 1.5 : 2
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: !isMobile, alpha: true, forceWebGL: tier === 'webgl2' })
-  await renderer.init()
-  renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap))
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.0
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFShadowMap
+type FrameCallback = (dt: number, time: number) => void
 
-  const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2500)
+/**
+ * Owns the renderer, scene and camera: sizing, pixel-ratio cap, the animation
+ * loop and GPU context-loss handling.
+ */
+export class Engine {
+  readonly scene = new THREE.Scene()
+  readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2500)
+  readonly isMobile = isMobileDevice()
 
-  const resize = () => {
-    const w = canvas.clientWidth || innerWidth
-    const h = canvas.clientHeight || innerHeight
-    renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap))
-    renderer.setSize(w, h, false)
-    camera.aspect = w / h
-    camera.updateProjectionMatrix()
+  private dprCap: number
+  private readonly frameCallbacks: FrameCallback[] = []
+  private readonly lostCallbacks: Array<() => void> = []
+  private readonly resizeObserver: ResizeObserver
+  private readonly guard: ContextGuard
+  private lastTime = performance.now()
+
+  private constructor(
+    readonly renderer: THREE.WebGPURenderer,
+    readonly canvas: HTMLCanvasElement,
+    readonly tier: Exclude<GpuTier, 'none'>,
+  ) {
+    this.dprCap = this.isMobile ? 1.5 : 2
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFShadowMap
+
+    this.resizeObserver = new ResizeObserver(() => this.resize())
+    this.resizeObserver.observe(canvas)
+    this.resize()
+
+    // three calls onDeviceLost for WebGPU device loss (not intentional destroy) and
+    // WebGL context loss. three never rebuilds GPU resources after a WebGL restore,
+    // so a restored context is handled by reloading the page (scores live in storage).
+    this.guard = new ContextGuard(() => this.lostCallbacks.forEach((cb) => cb()))
+    const threeOnLost = renderer.onDeviceLost.bind(renderer) // marks the renderer as lost
+    renderer.onDeviceLost = (info) => {
+      threeOnLost(info)
+      this.guard.lost()
+    }
+    canvas.addEventListener('webglcontextrestored', this.onRestored)
+
+    renderer.setAnimationLoop((now: number) => {
+      const dt = Math.max(0, (now - this.lastTime) / 1000)
+      this.lastTime = now
+      for (const cb of this.frameCallbacks) cb(dt, now / 1000)
+    })
   }
-  resize()
-  const ro = new ResizeObserver(resize)
-  ro.observe(canvas)
 
-  const frameCbs: Array<(dt: number, time: number) => void> = []
-  const lostCbs: Array<() => void> = []
-  let last = performance.now()
-  renderer.setAnimationLoop((now: number) => {
-    const dt = Math.max(0, (now - last) / 1000)
-    last = now
-    for (const cb of frameCbs) cb(dt, now / 1000)
-  })
-  // three calls onDeviceLost for WebGPU device loss (except intentional destroy)
-  // and for WebGL context loss. WebGL can come back; WebGPU loss is final.
-  // three never rebuilds GPU resources after a WebGL restore, so a restored
-  // context is handled by reloading the page (scores live in storage).
-  const guard = createContextGuard(() => lostCbs.forEach((cb) => cb()))
-  const threeOnLost = renderer.onDeviceLost.bind(renderer) // marks the renderer as lost
-  renderer.onDeviceLost = (info) => {
-    threeOnLost(info)
-    guard.lost()
+  /** Create and initialise the renderer for the detected tier. */
+  static async create(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>): Promise<Engine> {
+    const renderer = new THREE.WebGPURenderer({ canvas, antialias: !isMobileDevice(), alpha: true, forceWebGL: tier === 'webgl2' })
+    await renderer.init()
+    return new Engine(renderer, canvas, tier)
   }
-  const onRestored = () => {
-    guard.restored()
+
+  onFrame(cb: FrameCallback): void {
+    this.frameCallbacks.push(cb)
+  }
+
+  /** Fires once when the GPU context is lost and has not come back within 3 s. */
+  onContextLost(cb: () => void): void {
+    this.lostCallbacks.push(cb)
+  }
+
+  setPixelRatioCap(cap: number): void {
+    this.dprCap = cap
+    this.resize()
+  }
+
+  dispose(): void {
+    this.resizeObserver.disconnect()
+    this.canvas.removeEventListener('webglcontextrestored', this.onRestored)
+    this.renderer.onDeviceLost = () => {}
+    this.renderer.setAnimationLoop(null)
+    this.renderer.dispose()
+  }
+
+  private readonly onRestored = () => {
+    this.guard.restored()
     location.reload()
   }
-  canvas.addEventListener('webglcontextrestored', onRestored)
 
-  return {
-    renderer, scene, camera, tier, isMobile,
-    onFrame: (cb) => void frameCbs.push(cb),
-    onContextLost: (cb) => void lostCbs.push(cb),
-    setPixelRatioCap: (cap) => { dprCap = cap; resize() },
-    dispose: () => {
-      ro.disconnect()
-      canvas.removeEventListener('webglcontextrestored', onRestored)
-      renderer.onDeviceLost = () => {}
-      renderer.setAnimationLoop(null)
-      renderer.dispose()
-    },
+  private resize(): void {
+    const w = this.canvas.clientWidth || innerWidth
+    const h = this.canvas.clientHeight || innerHeight
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap))
+    this.renderer.setSize(w, h, false)
+    this.camera.aspect = w / h
+    this.camera.updateProjectionMatrix()
   }
 }

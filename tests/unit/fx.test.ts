@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // skids.ts / smoke.ts import three/webgpu for their scene helpers; stub it so the pure parts load in Node.
-vi.mock('three/webgpu', () => ({}))
+vi.mock('three/webgpu', () => import('three'))
 vi.mock('three/tsl', () => ({}))
 
 const { SkidBuffer } = await import('../../src/fx/skids')
