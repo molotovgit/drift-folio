@@ -21,26 +21,36 @@ export function applyDeadzone(v: number, deadzone: number): number {
  * Twin-stick gamepad (Gamepad API, standard mapping): left stick X steers the
  * path, right stick X sets the drift angle, RT/LT are analog throttle/brake,
  * A = handbrake-drift, B horn, X camera, Y reset, Start/Options = pause.
- * Uses the first connected standard-mapped pad. One-shot buttons fire on the
- * press edge only.
+ * Uses the first connected standard-mapped pad, else the first connected pad
+ * read with the same indices (most XInput-style pads match; the right stick
+ * is only trusted when the pad has four axes). One-shot buttons fire on the
+ * press edge only; switching pads forgets the old pad's buttons.
  */
 export class GamepadSource implements AnalogSource {
   private prevPressed: boolean[] = []
+  /** index + id of the pad read last frame */
+  private activeKey = ''
 
   constructor(private readonly getGamepads: () => (Gamepad | null)[] = () => navigator.getGamepads?.() ?? []) {}
 
+  /** The pad to read: a standard-mapped one if any, else the first connected one. */
+  private pick(): Gamepad | undefined {
+    const pads = this.getGamepads().filter((p): p is Gamepad => !!p && p.connected !== false)
+    return pads.find((p) => p.mapping === 'standard') ?? pads[0]
+  }
+
   read(): Partial<ControlState> | null {
-    const pad = this.getGamepads().find((p): p is Gamepad => !!p && p.connected !== false && p.mapping === 'standard')
-    if (!pad) {
-      this.prevPressed = []
-      return null
-    }
+    const pad = this.pick()
+    const key = pad ? `${pad.index}:${pad.id}` : ''
+    if (key !== this.activeKey) this.prevPressed = [] // a different pad: no stale edges
+    this.activeKey = key
+    if (!pad) return null
     const value = (i: number) => pad.buttons[i]?.value ?? 0
     const pressed = pad.buttons.map((b) => b.pressed)
     const edge = (i: number) => !!pressed[i] && !this.prevPressed[i]
     const out: Partial<ControlState> = {
       steer: applyDeadzone(pad.axes[AXIS.leftX] ?? 0, STICK_DEADZONE),
-      drift: applyDeadzone(pad.axes[AXIS.rightX] ?? 0, STICK_DEADZONE),
+      drift: pad.axes.length >= 4 ? applyDeadzone(pad.axes[AXIS.rightX] ?? 0, STICK_DEADZONE) : 0,
       throttle: applyDeadzone(value(BTN.rt), TRIGGER_DEADZONE),
       brake: applyDeadzone(value(BTN.lt), TRIGGER_DEADZONE),
       handbrake: value(BTN.a) > 0.5,

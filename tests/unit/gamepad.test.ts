@@ -62,9 +62,32 @@ describe('GamepadSource (twin stick)', () => {
     expect(src.read()!.camera).toBe(true)
   })
 
-  it('ignores missing and non-standard pads', () => {
+  it('ignores missing and disconnected pads', () => {
     expect(new GamepadSource(() => [null]).read()).toBeNull()
-    expect(new GamepadSource(() => [{ ...pad({ 0: 1 }), mapping: '' } as Gamepad]).read()).toBeNull()
+    expect(new GamepadSource(() => [{ ...pad({ 0: 1 }), connected: false } as Gamepad]).read()).toBeNull()
+  })
+
+  it('prefers a standard-mapped pad, else falls back to the first connected one', () => {
+    const odd = { ...pad({ 0: -1, 2: 1 }), index: 0, mapping: '' } as Gamepad
+    const std = { ...pad({ 0: 1 }), index: 1 } as Gamepad
+    expect(new GamepadSource(() => [odd, std]).read()!.steer).toBe(1)
+    const fallback = new GamepadSource(() => [null, odd]).read()!
+    expect(fallback.steer).toBe(-1)
+    expect(fallback.drift).toBe(1)
+    // two-axis pads have no right stick to trust
+    const twoAxis = { ...pad({ 0: 1 }), axes: [1, 0.9], mapping: '' } as unknown as Gamepad
+    expect(new GamepadSource(() => [twoAxis]).read()!.drift).toBe(0)
+  })
+
+  it('switching pads forgets the old pad buttons (a held button on the new pad fires once)', () => {
+    const a = { ...pad({}, { 3: 1 }), index: 0, id: 'pad A' } as Gamepad
+    const b = { ...pad({}, { 3: 1 }), index: 1, id: 'pad B' } as Gamepad
+    let pads: (Gamepad | null)[] = [a]
+    const src = new GamepadSource(() => pads)
+    expect(src.read()!.reset).toBe(true)
+    expect(src.read()!.reset).toBe(false)
+    pads = [null, b]
+    expect(src.read()!.reset).toBe(true)
   })
 })
 

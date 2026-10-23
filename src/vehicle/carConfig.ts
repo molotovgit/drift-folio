@@ -61,6 +61,8 @@ export const carConfig = {
     driftLatG: 0.9,
     /** path lateral acceleration from full steer while drifting, g */
     steerLatG: 0.45,
+    /** ...and while straightening after a release, so steering is not weak on the way out, g */
+    recoverSteerLatG: 0.9,
     /** brake tightens the line ×(1 + this) */
     brakeTighten: 0.6,
     maxLatG: 1.5,
@@ -69,7 +71,7 @@ export const carConfig = {
     /** share of the engine's drive that pushes along the path while sideways */
     driveShare: 0.38,
     /** sideways scrub deceleration at 90° slip, g; throttle cancels `throttleScrubCut` of it */
-    scrub: 0.75,
+    scrub: 0.45,
     throttleScrubCut: 0.65,
     /** braking deceleration in a drift at full brake, m/s² */
     brakeDecel: 7.5,

@@ -2,7 +2,7 @@ import type RAPIER from '@dimforge/rapier3d-compat'
 import { clamp, RAD, type Vec3 } from '../core/math'
 import { add, cross, dot, norm, scale, sub, v3 } from '../core/vec3'
 import type { CarConfig } from './carConfig'
-import { DRIFT_INPUT_DEADBAND, pathLateralAccel, targetSlipDeg } from './driftMath'
+import { DRIFT_INPUT_DEADBAND, pathLateralAccel, targetSlipDeg, type PathShaping } from './driftMath'
 
 const G = 9.81
 const GRAVITY = v3(0, -G, 0)
@@ -60,7 +60,12 @@ export class DriftController {
   /** rate-limited commanded slip, radians */
   private slipTarget = 0
 
-  constructor(private readonly cfg: CarConfig) {}
+  /** path shaping while straightening: the steer axis gets grip-like authority back */
+  private readonly recoverPath: PathShaping
+
+  constructor(private readonly cfg: CarConfig) {
+    this.recoverPath = { ...cfg.drift, steerLatG: cfg.drift.recoverSteerLatG }
+  }
 
   reset(): void {
     this.mix = 0
@@ -92,7 +97,9 @@ export class DriftController {
     const left = norm(cross(f.up, tangent))
 
     // --- path: lateral (centripetal) + longitudinal acceleration along the ground plane ---
-    const latRight = pathLateralAccel(this.engaged ? input.drift : 0, input.steer, input.brake, d)
+    const latRight = this.engaged
+      ? pathLateralAccel(input.drift, input.steer, input.brake, d)
+      : pathLateralAccel(0, input.steer, input.brake, this.recoverPath)
     const pathRate = clamp(-latRight / Math.max(speed, 3), -d.maxPathRate, d.maxPathRate) // CCW (left) positive
     // cancel the slope's sideways pull so the line is the driver's, not the camber's
     const aLeft = speed * pathRate - dot(GRAVITY, left)

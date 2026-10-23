@@ -11,6 +11,7 @@ const DRIFT_RANGE_PX = 60
  * A horizontal drag axis on one element: -1..1 from the drag distance since
  * the finger went down, back to 0 on release. Moves a knob for feedback.
  * `follow` places the knob under the finger on touch-down (floating stick).
+ * Only the first finger drives it; a lost pointer capture counts as a release.
  */
 class DragAxis {
   value = 0
@@ -23,6 +24,7 @@ class DragAxis {
   ) {
     const knob = el.querySelector<HTMLElement>('[data-knob]')!
     el.addEventListener('pointerdown', (e) => {
+      if (this.touch) return // a second finger on the same control
       el.setPointerCapture(e.pointerId)
       this.touch = { id: e.pointerId, startX: e.clientX }
       if (this.follow) {
@@ -45,6 +47,7 @@ class DragAxis {
     }
     el.addEventListener('pointerup', end)
     el.addEventListener('pointercancel', end)
+    el.addEventListener('lostpointercapture', end)
   }
 }
 
@@ -111,18 +114,29 @@ export class TouchControls implements AnalogSource {
     }
   }
 
+  /** Hold-to-press button; only the finger that pressed it can release it. */
   private bindButton(b: HTMLButtonElement, key: keyof TouchControls['held']): void {
-    const set = (on: boolean) => (e: PointerEvent) => {
-      e.preventDefault()
+    let pointer: number | null = null
+    const set = (on: boolean) => {
       this.held[key] = on
       b.classList.toggle('is-held', on)
     }
     b.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      if (pointer !== null) return // a second finger on the same button
+      pointer = e.pointerId
       b.setPointerCapture(e.pointerId)
-      set(true)(e)
+      set(true)
     })
-    b.addEventListener('pointerup', set(false))
-    b.addEventListener('pointercancel', set(false))
+    const release = (e: PointerEvent) => {
+      e.preventDefault()
+      if (e.pointerId !== pointer) return
+      pointer = null
+      set(false)
+    }
+    b.addEventListener('pointerup', release)
+    b.addEventListener('pointercancel', release)
+    b.addEventListener('lostpointercapture', release)
     b.addEventListener('contextmenu', (e) => e.preventDefault())
   }
 }
