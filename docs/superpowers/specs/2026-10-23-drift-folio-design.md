@@ -56,7 +56,7 @@ Reference: Inertial Drift style screenshot provided by the user.
 
 ## 6. World (from sketch v0.4)
 
-Height: summit 0 m, base town −120 m. Each descent 600–900 m so one run takes 60–90 s.
+Height: summit 0 m, base town −120 m. Each descent 600–1000 m so one run takes 60–100 s (raised from 900 m in M3: Systems Drop's hairpins cannot fit in 900 m between Fork 1 and the town).
 
 | Area | Content |
 |---|---|

@@ -12,12 +12,15 @@ export class GameOptions {
    * lets slow software renderers run more ticks per frame (same physics, faster wall clock).
    */
   readonly maxFrame: number
+  /** `?map=pad` loads the flat M1 test pad instead of the mountain (tests, handling tuning) */
+  readonly map: 'mountain' | 'pad'
 
   constructor(search: string) {
     const params = new URLSearchParams(search)
     this.debug = params.has('debug')
     this.quality = parseTier(params.get('quality'))
     this.maxFrame = this.debug && params.has('catchup') ? 10 / 60 : MAX_FRAME
+    this.map = params.get('map') === 'pad' ? 'pad' : 'mountain'
   }
 
   /** Quality to use: explicit override, else mid on phones, high elsewhere. */
