@@ -78,6 +78,7 @@ export class Engine {
 
   /** Create and initialise the renderer for the detected tier. */
   static async create(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>): Promise<Engine> {
+    // MSAA is skipped on phones (fill-rate); the outline pass keeps edges crisp
     const renderer = new THREE.WebGPURenderer({ canvas, antialias: !isMobileDevice(), alpha: true, forceWebGL: tier === 'webgl2' })
     await renderer.init()
     return new Engine(renderer, canvas, tier)

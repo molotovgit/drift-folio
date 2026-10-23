@@ -48,7 +48,7 @@ export class Game {
   private constructor(
     private readonly engine: Engine,
     private readonly visual: CarVisual,
-    readonly quality: QualityTier,
+    quality: QualityTier,
     options: GameOptions,
   ) {
     const { scene } = engine
@@ -79,20 +79,21 @@ export class Game {
   static async start(canvas: HTMLCanvasElement, tier: Exclude<GpuTier, 'none'>, options: GameOptions): Promise<Game> {
     const [engine] = await Promise.all([Engine.create(canvas, tier), RAPIER.init()])
     engine.onContextLost(() => skipOverlay.open('context-lost'))
+    // props and the car model download in parallel
+    const propsLoading = PropPlacer.place(engine.scene, greyboxDressing())
     const visual = await FdCarVisual.load().catch((err) => {
       console.warn('FD model failed to load, using the grey-box car', err)
       return new BoxCarVisual()
     })
     const game = new Game(engine, visual, options.qualityFor(engine.isMobile), options)
-    await game.dress()
+    await game.dress(propsLoading)
     if (options.debug) game.exposeDebugApi()
     return game
   }
 
-  /** Place the props and hand the lamp bulbs to the light pool. */
-  private async dress(): Promise<void> {
-    const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
-    this.lamps.setAnchors(PropPlacer.anchors(props, 'light_anchor'))
+  /** Once the props are placed, hand the lamp bulbs to the light pool. */
+  private async dress(propsLoading: Promise<THREE.Group>): Promise<void> {
+    this.lamps.setAnchors(PropPlacer.anchors(await propsLoading, 'light_anchor'))
   }
 
   /** One fixed physics tick. */
@@ -115,12 +116,13 @@ export class Game {
     this.visual.sync(this.car, pose)
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
 
-    this.updateEffects(t, fxDt)
     this.camera.update(t, dt)
     const camPos = this.engine.camera.position
     this.sky.follow(this.engine.camera)
     this.lighting.update(t.pos, camPos)
     this.lamps.update(camPos)
+    // effects after the camera and lamps so billboards/wrapping use this frame's view
+    this.updateEffects(t, fxDt)
     this.post.render(t.speed)
   }
 

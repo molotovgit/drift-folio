@@ -26,8 +26,8 @@ const NAME_OVERRIDES: Record<string, Partial<ToonOptions>> = {
   screen: { color: '#9fe8ff', emissive: '#9fe8ff', emissiveIntensity: 1.6 },
   paper_lantern: { color: '#ffcf7a', emissive: '#ffb35a', emissiveIntensity: 2.4 },
   glass: { color: '#2a2440', bands: 2 },
-  // the car body is a smooth loft; faceting it would look wrong
 }
+/** the car body is a smooth loft; faceting it would look wrong */
 const SMOOTH_SHADED = new Set(['paint', 'paint_shadow', 'glass'])
 
 /**
@@ -79,7 +79,8 @@ export class ToonMaterials {
     root.traverse((o) => {
       const mesh = o as THREE.Mesh
       if (!mesh.isMesh) return
-      this.weldForOutline(mesh)
+      // welding would break skinning weights; there are no skinned meshes today, guard anyway
+      if (!(mesh as THREE.Mesh & { isSkinnedMesh?: boolean }).isSkinnedMesh) this.weldForOutline(mesh)
       mesh.castShadow = opts.shadows ?? true
       mesh.receiveShadow = opts.shadows ?? true
       mesh.material = Array.isArray(mesh.material) ? mesh.material.map((m) => this.convert(m)) : this.convert(mesh.material)

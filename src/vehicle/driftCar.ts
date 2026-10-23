@@ -6,6 +6,7 @@ import { carConfig, type CarConfig } from './carConfig'
 import { CLUTCH_KICK_SECONDS, counterSteerAssist, isDrifting, rearGripScale, slipAngleDeg } from './driftMath'
 import { Wheel, type WheelState } from './wheel'
 
+// re-exported so world builders and tests can keep importing from the car module
 export { surfaceOf, type WheelState } from './wheel'
 export { yawQuat } from '../core/vec3'
 
@@ -172,7 +173,7 @@ export class DriftCar {
     }
     for (const w of this.wheelList) w.simulate(ctx, w.front ? this.steerAngle : 0)
 
-    this.applyAeroDrag(h)
+    this.applyAeroDrag(lv, h)
     this.applyDriftAssist(c, t0, ctx.up, h)
   }
 
@@ -221,8 +222,8 @@ export class DriftCar {
     this.steerAngle = damp(this.steerAngle, -steerCmd * lockDeg * RAD, cfg.steerSpeed, h)
   }
 
-  private applyAeroDrag(h: number): void {
-    const lv = this.body.linvel()
+  /** Quadratic drag from the velocity at the start of the tick (before wheel impulses). */
+  private applyAeroDrag(lv: Vec3, h: number): void {
     const speed = Math.hypot(lv.x, lv.y, lv.z)
     this.body.applyImpulse(scale(lv, -this.cfg.dragCoeff * speed * h), true)
   }
