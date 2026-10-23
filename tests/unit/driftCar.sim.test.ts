@@ -146,4 +146,16 @@ describe('FD drift handling (headless physics)', () => {
     expect(t.speed).toBeLessThan(0.2)
     expect(t.yaw).toBeCloseTo(1, 1)
   })
+
+  it('wheel hubs are drawn with the body, not one tick behind', () => {
+    const { car, run } = rig()
+    run(0.5, {})
+    run(4, { throttle: 1 })
+    const p = car.pose(1)
+    // front hubs ahead of the body centre by about half the wheelbase along +Z
+    const frontZ = (p.wheels[0].z + p.wheels[1].z) / 2 - p.pos.z
+    const rearZ = (p.wheels[2].z + p.wheels[3].z) / 2 - p.pos.z
+    expect(frontZ).toBeCloseTo(2.425 / 2, 1)
+    expect(rearZ).toBeCloseTo(-2.425 / 2, 1)
+  })
 })
