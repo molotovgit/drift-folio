@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { carConfig } from '../../src/vehicle/carConfig'
-import { driftCommand, isDrifting, lateralGrip, pathLateralAccel, slipAngleDeg, targetSlipDeg } from '../../src/vehicle/driftMath'
+import { DriftCommand, handbrakeDirection, isDrifting, lateralGrip, pathLateralAccel, slipAngleDeg, targetSlipDeg } from '../../src/vehicle/driftMath'
 
 const r = (deg: number) => (deg * Math.PI) / 180
 
@@ -35,21 +35,39 @@ describe('lateralGrip', () => {
   })
 })
 
-describe('driftCommand (drift axis, + = right)', () => {
+describe('DriftCommand (drift axis, + = right)', () => {
   const c = (drift: number, steer = 0, handbrake = false) => ({ drift, steer, handbrake })
   it('passes the drift axis through, ignoring stick noise', () => {
-    expect(driftCommand(c(0.7), 0)).toBe(0.7)
-    expect(driftCommand(c(-1, 1, true), 0)).toBe(-1) // the drift axis beats the handbrake
-    expect(driftCommand(c(0.03), 0)).toBe(0)
+    const d = new DriftCommand()
+    expect(d.resolve(c(0.7), 0)).toBe(0.7)
+    expect(d.resolve(c(-1, 1, true), 0)).toBe(-1) // the drift axis beats the handbrake
+    expect(d.resolve(c(0.03), 0)).toBe(0)
   })
-  it('legacy handbrake drifts fully toward the steer direction', () => {
-    expect(driftCommand(c(0, 0.4, true), 0)).toBe(1)
-    expect(driftCommand(c(0, -0.2, true), 0)).toBe(-1)
+  it('handbrake drifts fully toward the steer direction, or keeps an existing slide', () => {
+    expect(new DriftCommand().resolve(c(0, 0.4, true), 0)).toBe(1)
+    expect(new DriftCommand().resolve(c(0, -0.2, true), 0)).toBe(-1)
+    expect(new DriftCommand().resolve(c(0, 0.5, true), -30)).toBe(-1) // the slide's side beats the steer
+    expect(new DriftCommand().resolve(c(0, 0, true), 3)).toBe(0) // straight line: nothing
+    expect(new DriftCommand().resolve(c(0, 0.5, false), 30)).toBe(0)
   })
-  it('handbrake without steer keeps an existing slide, or gives nothing in a straight line', () => {
-    expect(driftCommand(c(0, 0, true), -30)).toBe(-1)
-    expect(driftCommand(c(0, 0, true), 3)).toBe(0)
-    expect(driftCommand(c(0, 0.5, false), 30)).toBe(0)
+  it('latches the handbrake direction until release: counter-steer does not flip the drift', () => {
+    const d = new DriftCommand()
+    expect(d.resolve(c(0, 1, true), 0)).toBe(1)
+    expect(d.resolve(c(0, -1, true), 40)).toBe(1) // counter-steer mid-drift
+    expect(d.resolve(c(0, -1, true), -10)).toBe(1)
+    expect(d.resolve(c(0, -1, false), 30)).toBe(0) // release clears it
+    expect(d.resolve(c(0, -1, true), 2)).toBe(-1) // a fresh press picks again
+  })
+  it('a press with no direction yet picks one as soon as there is one', () => {
+    const d = new DriftCommand()
+    expect(d.resolve(c(0, 0, true), 0)).toBe(0)
+    expect(d.resolve(c(0, -0.5, true), 0)).toBe(-1)
+    expect(d.resolve(c(0, 1, true), 0)).toBe(-1)
+  })
+  it('handbrakeDirection: slide side first, then steer', () => {
+    expect(handbrakeDirection(-1, 10)).toBe(1)
+    expect(handbrakeDirection(-1, 2)).toBe(-1)
+    expect(handbrakeDirection(0.1, 2)).toBe(0)
   })
 })
 

@@ -36,19 +36,20 @@ export class WallGraze {
   }
 
   /**
-   * Apply a graze from a contact force direction (either sign; only its
-   * horizontal part is used). Returns true if it changed the car's motion.
+   * Apply a graze from the wall's push on the car: `outward` points away from
+   * the wall (only its horizontal part is used). A car already moving away
+   * from the wall (a restitution bounce, the tail clipping it mid-drift) is
+   * left alone. Returns true if it changed the car's motion.
    */
-  apply(body: RAPIER.RigidBody, forceDir: Vec3): boolean {
+  apply(body: RAPIER.RigidBody, outward: Vec3): boolean {
     if (this.cooldown > 0) return false
-    const flat = Math.hypot(forceDir.x, forceDir.z)
+    const flat = Math.hypot(outward.x, outward.z)
     if (flat < 0.3) return false // a floor or roof contact, not a wall
     const v = body.linvel()
     const vFlat = v3(v.x, 0, v.z)
     const speed = Math.hypot(v.x, v.z)
-    // wall normal pointing away from the wall, i.e. against the car's motion into it
-    let n = v3(forceDir.x / flat, 0, forceDir.z / flat)
-    if (dot(vFlat, n) > 0) n = scale(n, -1)
+    const n = v3(outward.x / flat, 0, outward.z / flat)
+    // speed into the wall; zero or negative = already leaving it
     const vIn = -dot(vFlat, n)
     if (vIn < MIN_IN_SPEED || speed < 1) return false
 

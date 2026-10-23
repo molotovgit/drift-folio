@@ -126,7 +126,7 @@ function drive(opts: Partial<RacingLineOptions>): RunResult {
     // same rule as Game: any chassis contact-force event against a rail is a crash
     events.drainContactForceEvents((e) => {
       if (surfaceOf.get(e.collider1()) !== 'rail' && surfaceOf.get(e.collider2()) !== 'rail') return
-      car.grazeWall(e.maxForceDirection()) // same rail glance as Game
+      car.grazeWall(e) // same rail glance as Game
       railHits++
       if (TRACE) console.log(`  rail hit at t=${time().toFixed(2)} s, ${driver.progress.toFixed(0)} m, ${e.totalForceMagnitude().toFixed(0)} N`)
     })

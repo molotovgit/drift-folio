@@ -190,7 +190,7 @@ export class Game {
       const s2 = surfaceOf.get(e.collider2()) ?? ''
       if (!CRASH_SURFACES.has(s1) && !CRASH_SURFACES.has(s2)) return
       // guard rails glance the car back on course (arcade graze) rather than stopping it
-      if (s1 === 'rail' || s2 === 'rail') this.car.grazeWall(e.maxForceDirection())
+      if (s1 === 'rail' || s2 === 'rail') this.car.grazeWall(e)
       if (!this.crashed) {
         this.crashCount++
         this.audio.event({ type: 'crash', value: 0 })

@@ -4,7 +4,7 @@ import { clamp, damp, RAD, toGround, type Vec2, type Vec3 } from '../core/math'
 import { dot, lerp3, nlerpQuat, rotate, scale, v3, yawQuat, type Quat } from '../core/vec3'
 import { carConfig, type CarConfig } from './carConfig'
 import { DriftController } from './driftController'
-import { driftCommand, isDrifting, slipAngleDeg } from './driftMath'
+import { DriftCommand, isDrifting, slipAngleDeg } from './driftMath'
 import { WallGraze } from './wallGraze'
 import { Wheel, type WheelState } from './wheel'
 
@@ -54,6 +54,9 @@ export class DriftCar {
   private readonly wheelList: Wheel[]
   private readonly drift: DriftController
   private readonly graze = new WallGraze()
+  private readonly driftCommand = new DriftCommand()
+  /** the box that reports hard contacts (crash rule, wall graze) */
+  private readonly chassis: RAPIER.Collider
   private steerAngle = 0
   private lastThrottle = 0
   private prevPose: Pose | null = null
@@ -74,7 +77,7 @@ export class DriftCar {
         .setCcdEnabled(true),
     )
     // chassis box (reports hard contacts for the crash rule) + rounded roof so rollovers don't snag
-    world.createCollider(
+    this.chassis = world.createCollider(
       RAPIER.ColliderDesc.cuboid(0.86, 0.27, 2.1)
         .setTranslation(0, 0.22, 0)
         .setDensity(0)
@@ -154,9 +157,11 @@ export class DriftCar {
     const lv = this.body.linvel()
     const fwd = rotate(rot, FORWARD)
     const forwardSpeed = dot(lv, fwd)
-    const drift = driftCommand(c, t0.slipDeg)
-    // the legacy handbrake with no direction to drift in just slows the car
-    const pedals = c.handbrake && drift === 0 ? { ...c, brake: Math.max(c.brake, this.cfg.handbrakeBrake) } : c
+    const drift = this.driftCommand.resolve(c, t0.slipDeg)
+    // the handbrake with no direction to drift in just slows the car; only while
+    // rolling forward, since the brake pedal at a standstill means reverse
+    const slowing = c.handbrake && drift === 0 && forwardSpeed > 0.8
+    const pedals = slowing ? { ...c, brake: Math.max(c.brake, this.cfg.handbrakeBrake) } : c
     const driveForce = c.throttle > 0 ? Math.min(this.cfg.maxDriveForce, this.cfg.powerW / Math.max(Math.abs(forwardSpeed), 4)) * c.throttle : 0
 
     this.updateSteering(c, t0, h)
@@ -198,11 +203,15 @@ export class DriftCar {
   }
 
   /**
-   * A guard-rail contact (Rapier contact-force direction, either sign): scrub
+   * A guard-rail contact-force event involving the chassis: scrub
    * some speed and carry on along the wall. Call after `world.step()`.
    */
-  grazeWall(forceDir: Vec3): boolean {
-    return this.graze.apply(this.body, forceDir)
+  grazeWall(e: { collider2(): number; maxForceDirection(): Vec3 }): boolean {
+    // Rapier's direction is the force on collider2 (normal from collider1 to collider2),
+    // checked both ways round in wallGraze.sim.test: away from the wall when that is the chassis
+    const d = e.maxForceDirection()
+    const sign = e.collider2() === this.chassis.handle ? 1 : -1
+    return this.graze.apply(this.body, scale(d, sign))
   }
 
   /** 0 = plain tyre grip, 1 = the twin-axis drift controller owns the tyre forces. */
@@ -221,6 +230,7 @@ export class DriftCar {
     this.prevPose = null
     this.drift.reset()
     this.graze.reset()
+    this.driftCommand.reset()
     for (const w of this.wheelList) w.reset()
   }
 

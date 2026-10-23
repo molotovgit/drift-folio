@@ -2,7 +2,7 @@ import { idleControls, type ControlState } from '../core/input'
 import { clamp, type Vec2, type Vec3 } from '../core/math'
 import type { Telemetry } from '../vehicle/driftCar'
 import { carConfig } from '../vehicle/carConfig'
-import { driftCommand } from '../vehicle/driftMath'
+import { handbrakeDirection } from '../vehicle/driftMath'
 import type { RoadNetwork } from '../world/roadNetwork'
 import { radii } from '../world/spline'
 
@@ -57,7 +57,7 @@ export const DEFAULT_RACING_LINE: RacingLineOptions = {
   lookMax: 24,
   hairpinRadius: 18,
   hairpinSpeed: 11,
-  tapSeconds: 0.25,
+  tapSeconds: 0.18,
   tapMinSpeed: 11,
   driftThrottle: 0.45,
   courseBlend: 0,
@@ -94,6 +94,8 @@ export class RacingLineDriver {
   private idx = 0
   /** seconds of drift flick remaining */
   private tapT = 0
+  /** drift axis held for the whole flick (-1 left, +1 right), fixed when it starts */
+  private tapDir = 0
   private readonly tapped = new Set<number>()
 
   constructor(roads: RoadNetwork, edgeIds: readonly string[], opts: Partial<RacingLineOptions> = {}) {
@@ -212,15 +214,15 @@ export class RacingLineDriver {
   }
 
   /**
-   * One short drift-axis flick per hairpin, just before its entry. It follows
-   * the steering (like the handbrake-drift button): the pure-pursuit steer
-   * already knows which way the car must turn right now, which on an S-bend
-   * entry is not always the hairpin's own direction.
+   * One short drift-axis flick per hairpin, just before its entry. Its
+   * direction is picked once, when it starts, like the handbrake-drift button:
+   * from the steering, since the pure-pursuit steer knows which way the car
+   * must turn right now (on an S-bend entry not always the hairpin's own way).
    */
   private driftFlicks(t: Telemetry, c: ControlState, dt: number): void {
     if (this.tapT > 0) {
       this.tapT -= dt
-      c.drift = driftCommand({ drift: 0, steer: c.steer, handbrake: true }, t.slipDeg)
+      c.drift = this.tapDir
       return
     }
     // tap only once slowed to near the hairpin speed: a fast slide runs wide into the rail
@@ -228,8 +230,9 @@ export class RacingLineDriver {
     const entry = this.pointAt(this.progress + 2 + t.speed * 0.2)
     if (entry.hairpin < 0 || this.tapped.has(entry.hairpin)) return
     this.tapped.add(entry.hairpin)
-    this.tapT = this.opts.tapSeconds
-    c.drift = driftCommand({ drift: 0, steer: c.steer, handbrake: true }, t.slipDeg)
+    this.tapDir = handbrakeDirection(c.steer, t.slipDeg)
+    this.tapT = this.tapDir === 0 ? 0 : this.opts.tapSeconds
+    c.drift = this.tapDir
   }
 
   /** Advance `idx` to the nearest sample within a window around it (never jumps to another road). */

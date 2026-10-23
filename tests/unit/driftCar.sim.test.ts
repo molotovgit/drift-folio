@@ -77,6 +77,26 @@ describe('FD drift handling (headless physics)', () => {
     expect(upright(car)).toBeGreaterThan(0.9)
   })
 
+  it('counter-steering during a handbrake drift keeps its side (no flip across)', () => {
+    const { car, run } = rig()
+    run(0.5, {})
+    run(4, { throttle: 1 })
+    run(0.6, { throttle: 1, steer: 1, handbrake: true })
+    expect(car.telemetry().slipDeg).toBeGreaterThan(20)
+    let minSlip = Infinity
+    run(1.5, { throttle: 1, steer: -1, handbrake: true }, (c) => (minSlip = Math.min(minSlip, c.telemetry().slipDeg)))
+    expect(minSlip).toBeGreaterThan(20) // still a right-hand drift throughout
+  })
+
+  it('handbrake at a standstill does not reverse the car', () => {
+    const { car, run } = rig()
+    run(0.5, {})
+    run(2, { handbrake: true })
+    const t = car.telemetry()
+    expect(t.speed).toBeLessThan(0.3)
+    expect(Math.hypot(t.pos.x, t.pos.z)).toBeLessThan(0.3)
+  })
+
   it('straightens out when inputs are released', () => {
     const { car, run } = rig()
     run(0.5, {})

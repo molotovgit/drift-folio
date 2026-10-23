@@ -46,19 +46,25 @@ test.describe('project corners and cards (M5)', () => {
     const { id, turn } = await page.evaluate(() => {
       const d = (window as unknown as { __drift: Debug }).__drift
       const c = d.corners()[0]
-      // 8 m before the apex
+      // 8 m before the apex, nose turned 30° toward the inside of the bend (yaw + = left;
+      // turn +1 = a left bend), so the launch below can aim the velocity at the apex
       d.teleportIndex(c.edgeId, c.index - 4)
+      const p = d.telemetry().pos
+      const aimYaw = Math.atan2(c.clip.x - p.x, c.clip.z - p.z)
+      d.teleportTo(p.x, p.z, aimYaw + (30 * Math.PI * c.turn) / 180)
       return { id: c.id, turn: c.turn }
     })
     // Twin-axis handling: a slide only holds while the drift axis is held (otherwise the
-    // car straightens), so ramp the drift key toward the slide while standing (the axis
-    // does nothing at walking pace), then launch sliding 30° toward the inside of the
-    // bend. launch(+slip) is a right-hand slide (slip > 0), i.e. drift right = L.
+    // car straightens), so ramp the drift key toward the bend while standing (the axis
+    // does nothing at walking pace). Nose inside the bend = a slide to the bend's side:
+    // a left bend (turn +1) is a left-hand drift (J), and the drift curves the path into it.
     await page.locator('#scene').click()
-    await page.keyboard.down(turn > 0 ? 'KeyL' : 'KeyJ')
+    await page.keyboard.down(turn > 0 ? 'KeyJ' : 'KeyL')
     await page.waitForTimeout(400)
     await page.keyboard.down('KeyW')
-    await page.evaluate((sign) => (window as unknown as { __drift: Debug }).__drift.launch(18, 30 * sign), Math.sign(turn))
+    // launch(speed, slip) turns the velocity by slip from the heading (left +): -30·turn
+    // points it back along aimYaw, straight at the apex
+    await page.evaluate((t) => (window as unknown as { __drift: Debug }).__drift.launch(18, -30 * t), turn)
     await expect.poll(() => page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.openCard()), { timeout: 20_000 }).toBe(id)
     await expect(page.locator('#card-panel')).toBeVisible()
   })
