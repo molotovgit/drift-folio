@@ -121,6 +121,21 @@ export class RegionProps {
     }
   }
 
+  /**
+   * Compile every region mesh's pipeline at load, while the loading screen is
+   * up: the merged meshes start hidden (far from the summit), so otherwise
+   * WebGPU would compile them on the first approach and stutter (phones).
+   * Shows them all for the compile; the next `update` hides the far ones again.
+   */
+  async warmUp(renderer: THREE.WebGPURenderer, camera: THREE.Camera, scene: THREE.Scene): Promise<void> {
+    for (const s of this.statics) s.mesh.visible = !s.detail || this.tierShowsDetail
+    try {
+      await renderer.compileAsync(this.group, camera, scene)
+    } catch (err) {
+      console.warn('region pipelines did not precompile; they compile on first sight', err)
+    }
+  }
+
   /** How many merged meshes are drawn now (for tests/budgets). */
   get visibleStatics(): number {
     return this.statics.filter((s) => s.mesh.visible).length

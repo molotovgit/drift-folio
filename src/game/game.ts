@@ -173,6 +173,8 @@ export class Game {
   private async dress(): Promise<void> {
     if (this.mountain) {
       await Promise.all([this.mountain.dress(this.post.tier), this.features?.build()])
+      // the regions are out of sight at the start: compile their pipelines now, not on first approach
+      await this.mountain.warmUp(this.engine.renderer, this.engine.camera)
       this.lamps.setAnchors([...this.mountain.lamps])
       return
     }

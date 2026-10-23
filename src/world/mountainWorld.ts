@@ -112,6 +112,11 @@ export class MountainWorld {
   }
 
   /** World positions of every lamp bulb (valid after `dress`). */
+  /** Precompile the region props' pipelines (after `dress`, before the game reports ready). */
+  async warmUp(renderer: THREE.WebGPURenderer, camera: THREE.Camera): Promise<void> {
+    await this.regionProps?.warmUp(renderer, camera, this.scene)
+  }
+
   get lamps(): readonly THREE.Vector3[] {
     return this.lampAnchors
   }

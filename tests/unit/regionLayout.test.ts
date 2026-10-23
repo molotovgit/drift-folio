@@ -192,6 +192,7 @@ describe('regions and the roadside plants', () => {
     expect(roadside.items.filter((it) => BIOMES.weight('city', it.x, it.z) > 0.9 && it.kind === 'fern')).toHaveLength(0)
   })
 
+  // (compares only trees away from the regions: near them the region roads and props take trees away by design)
   it('the mountain forest stands where it always did: the regions only take trees away near themselves', () => {
     const regionDefs = new Set(REGION_EDGE_DEFS.map((d) => d.id))
     const regionNodes = new Set(REGION_NODE_DEFS.map((n) => n.id))
@@ -227,6 +228,21 @@ describe('regions and the roadside plants', () => {
     const kept = before.filter((t) => !nearRegion(t))
     expect(kept.length).toBeGreaterThan(4500)
     expect(kept.filter((t) => !now.has(key(t)))).toEqual([])
+  })
+
+  it('the grown margins continue the square forest lattice: one tree per 8.5 m cell, no bunching at the seam', () => {
+    const trees = treeSpots(roads, terrain, treeKeepOut(roads), regions.keepOuts)
+    const m = MOUNTAIN_FOREST_BOUNDS
+    // jitter is under half a cell, so rounding finds each tree's lattice cell; two trees in one cell = misaligned grids
+    const cells = new Map<string, number>()
+    for (const t of trees) {
+      const k = `${Math.round((t.x - (m.minX + 20)) / 8.5)},${Math.round((t.z - (m.minZ + 20)) / 8.5)}`
+      cells.set(k, (cells.get(k) ?? 0) + 1)
+    }
+    expect([...cells].filter(([, n]) => n > 1)).toEqual([])
+    // and the margins were planted (west of the square and south of it)
+    expect(trees.filter((t) => t.x < m.minX).length).toBeGreaterThan(50)
+    expect(trees.filter((t) => t.z > m.minZ + m.size).length).toBeGreaterThan(50)
   })
 
   it('is deterministic: a second plan of the same world is identical', () => {

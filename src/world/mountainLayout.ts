@@ -98,7 +98,8 @@ export function treeSpots(roads: RoadNetwork, terrain: TerrainHeights, keepOut: 
     out.push({ model, x, y: terrain.heightAt(x, z) - 0.2, z, yaw, scale })
   }
   const m = MOUNTAIN_FOREST_BOUNDS
-  const inSquare = (x: number, z: number) => x >= m.minX + 20 && x < m.minX + m.size - 20 && z >= m.minZ + 20 && z < m.minZ + m.size - 20
+  // (a lattice point of the square; the tolerance absorbs the two loops' summed float steps)
+  const inSquare = (x: number, z: number) => x > m.minX + 20 - 1e-6 && x < m.minX + m.size - 20 && z > m.minZ + 20 - 1e-6 && z < m.minZ + m.size - 20
   const rnd = mulberry32(2026)
   for (let gz = m.minZ + 20; gz < m.minZ + m.size - 20; gz += TREE_GRID) {
     for (let gx = m.minX + 20; gx < m.minX + m.size - 20; gx += TREE_GRID) {
@@ -110,11 +111,13 @@ export function treeSpots(roads: RoadNetwork, terrain: TerrainHeights, keepOut: 
       plant(rnd, x, z, d)
     }
   }
-  // the margins the terrain grew by
+  // the margins the terrain grew by, on the same lattice as the square (no bunched seam)
   const grown = mulberry32(2027)
   const { minX, minZ, size } = terrain.bounds
-  for (let gz = minZ + 20; gz < minZ + size - 20; gz += TREE_GRID) {
-    for (let gx = minX + 20; gx < minX + size - 20; gx += TREE_GRID) {
+  const gx0 = m.minX + 20 - Math.ceil((m.minX - minX) / TREE_GRID) * TREE_GRID
+  const gz0 = m.minZ + 20 - Math.ceil((m.minZ - minZ) / TREE_GRID) * TREE_GRID
+  for (let gz = gz0; gz < minZ + size - 20; gz += TREE_GRID) {
+    for (let gx = gx0; gx < minX + size - 20; gx += TREE_GRID) {
       const x = gx + (grown() - 0.5) * TREE_GRID * 0.9
       const z = gz + (grown() - 0.5) * TREE_GRID * 0.9
       const roll = grown()
