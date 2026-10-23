@@ -50,11 +50,26 @@ export const ROADSIDE_KINDS: Readonly<Record<RoadsideKind, KindRule>> = {
 /** Nothing stands closer than this to ANY road centreline (half width 4 m + rail + post). */
 export const ROAD_CLEARANCE = 5.4
 /** keep this far from the edge of a shortcut channel or the railway bed */
-const CHANNEL_MARGIN = 3
+export const CHANNEL_MARGIN = 3
 /** only small plants (`town: true`) grow within this distance of a town street */
 const TOWN_BUFFER = 16
 /** keep this far outside a paved lot (town plaza, skidpad, gymkhana, peak) */
-const LOT_MARGIN = 6
+export const LOT_MARGIN = 6
+/** keep-out radius around each landmark model: half its footprint plus a step (tools/blender/ASSETS.md sizes) */
+export const LANDMARK_CLEARANCE: Readonly<Record<string, number>> = {
+  // the road runs through the torii: the disc must reach its posts, 5.9 m either side
+  torii: 7.5,
+  vending_machine_red: 2,
+  vending_machine_blue: 2,
+  signpost: 2.5,
+  shrine: 3,
+  tea_house: 6.5,
+  house_0: 6,
+  house_1: 6,
+}
+const DEFAULT_LANDMARK_CLEARANCE = 6
+/** cell size of the keep-out disc grid, metres */
+const ZONE_CELL = 32
 /** extra roadside tree clusters: one roll every N metres per side, trees at least this far from any road */
 const CLUSTER_EVERY = 30
 const CLUSTER_CLEARANCE = 10.5
@@ -79,6 +94,42 @@ export interface KeepOut {
 }
 
 /**
+ * Keep-out discs bucketed into ZONE_CELL squares (each disc in every cell its
+ * bounding box touches), so a point test reads one cell instead of every disc.
+ */
+class DiscGrid {
+  private readonly cells = new Map<number, KeepOut[]>()
+
+  constructor(discs: readonly KeepOut[]) {
+    for (const d of discs) {
+      for (let cz = Math.floor((d.z - d.r) / ZONE_CELL); cz <= Math.floor((d.z + d.r) / ZONE_CELL); cz++) {
+        for (let cx = Math.floor((d.x - d.r) / ZONE_CELL); cx <= Math.floor((d.x + d.r) / ZONE_CELL); cx++) {
+          const k = DiscGrid.key(cx, cz)
+          let bucket = this.cells.get(k)
+          if (!bucket) this.cells.set(k, (bucket = []))
+          bucket.push(d)
+        }
+      }
+    }
+  }
+
+  /** True if (x, z) lies strictly inside any disc. */
+  contains(x: number, z: number): boolean {
+    const bucket = this.cells.get(DiscGrid.key(Math.floor(x / ZONE_CELL), Math.floor(z / ZONE_CELL)))
+    if (!bucket) return false
+    for (const d of bucket) if ((d.x - x) ** 2 + (d.z - z) ** 2 < d.r * d.r) return true
+    return false
+  }
+
+  private static key(cx: number, cz: number): number {
+    return (cx + 4096) * 8192 + (cz + 4096)
+  }
+}
+
+/** Both sides of a road sample: +1 = left of travel, −1 = right. */
+const SIDES = [1, -1] as const
+
+/**
  * Where the roadside vegetation goes: walks every road edge, rolls each kind's
  * density per 2 m sample and side, and rejects anything on or near any road,
  * in a town lot, a shortcut channel, the railway, or on top of an existing
@@ -89,15 +140,17 @@ export class RoadsideLayout {
   readonly items: readonly RoadsideItem[]
   /** extra maple/pine clusters just behind the verge (reuse the forest's instanced models) */
   readonly trees: readonly TreeSpot[]
-  private readonly zones: KeepOut[]
+  private readonly zones: DiscGrid
   private readonly channels: { c: Channel; minX: number; maxX: number; minZ: number; maxZ: number }[]
   private readonly patches = new ValueNoise(404)
 
+  /** `forest` is the forest's keep-outs (`treeKeepOut`), passed in when the caller already has them. */
   constructor(
     private readonly roads: RoadNetwork,
     private readonly terrain: TerrainHeights,
+    forest: readonly KeepOut[] = treeKeepOut(roads),
   ) {
-    this.zones = RoadsideLayout.keepOuts(roads, terrain)
+    this.zones = new DiscGrid(RoadsideLayout.keepOuts(roads, terrain, forest))
     this.channels = allChannels(roads).map((c) => {
       const m = c.width / 2 + CHANNEL_MARGIN
       const xs = c.points.map((p) => p.x)
@@ -118,7 +171,7 @@ export class RoadsideLayout {
     const hit = this.roads.index.nearest(x, z, Math.max(clearance, TOWN_BUFFER))
     if (hit && hit.dist < clearance) return false
     if (hit && !town && hit.dist < TOWN_BUFFER && hit.edge.route === 'town') return false
-    if (this.zones.some((k) => (k.x - x) ** 2 + (k.z - z) ** 2 < k.r * k.r)) return false
+    if (this.zones.contains(x, z)) return false
     for (const ch of this.channels) {
       if (x < ch.minX || x > ch.maxX || z < ch.minZ || z > ch.maxZ) continue
       if (channelDistance(ch.c, x, z).dist < ch.c.width / 2 + CHANNEL_MARGIN) return false
@@ -127,13 +180,13 @@ export class RoadsideLayout {
   }
 
   /** Discs to avoid: the forest's keep-outs, paved lots, and every prop already beside the road. */
-  static keepOuts(roads: RoadNetwork, terrain: TerrainHeights): KeepOut[] {
-    const zones: KeepOut[] = [...treeKeepOut(roads)]
+  static keepOuts(roads: RoadNetwork, terrain: TerrainHeights, forest: readonly KeepOut[] = treeKeepOut(roads)): KeepOut[] {
+    const zones: KeepOut[] = [...forest]
     for (const l of [...TOWN_LOTS, PEAK]) zones.push({ x: l.x, z: l.z, r: l.r + LOT_MARGIN })
     for (const l of lampSpots(roads)) zones.push({ x: l.pos.x, z: l.pos.z, r: 1.6 })
     for (const f of fenceSpots(roads)) zones.push({ x: f.pos.x, z: f.pos.z, r: 2.4 })
     for (const c of cornerSpots(roads)) zones.push({ x: c.board.x, z: c.board.z, r: 4 })
-    for (const l of landmarks(roads, terrain)) zones.push({ x: l.x, z: l.z, r: l.model === 'torii' ? 3 : 6 })
+    for (const l of landmarks(roads, terrain)) zones.push({ x: l.x, z: l.z, r: LANDMARK_CLEARANCE[l.model] ?? DEFAULT_LANDMARK_CLEARANCE })
     return zones
   }
 
@@ -151,27 +204,31 @@ export class RoadsideLayout {
     const rule = ROADSIDE_KINDS[kind]
     // samples are SAMPLE_SPACING (2 m) apart
     const perSample = rule.per10m / 5
+    const count = rule.cluster?.count ?? 1
+    const spread = rule.cluster?.spread ?? 0
+    const clearance = Math.max(ROAD_CLEARANCE, rule.band[0] - 0.6)
     for (let i = 0; i < e.points.length; i++) {
-      for (const side of [1, -1] as const) {
+      const t = e.tangent(i)
+      const l = leftOf(t.x, t.y)
+      for (const side of SIDES) {
         let n = Math.floor(perSample) + (rnd() < perSample % 1 ? 1 : 0)
         while (n-- > 0) {
-          const t = e.tangent(i)
-          const l = leftOf(t.x, t.y)
           const off = (rule.band[0] + rnd() * (rule.band[1] - rule.band[0])) * side
           const along = (rnd() - 0.5) * 2
           const cx = e.points[i].x + l.x * off + t.x * along
           const cz = e.points[i].z + l.z * off + t.y * along
-          if (rule.patch && this.patches.fbm(cx / rule.patch.scale + patchOffset(kind), cz / rule.patch.scale, 2) < rule.patch.threshold) continue
-          const count = rule.cluster?.count ?? 1
-          const spread = rule.cluster?.spread ?? 0
+          if (rule.patch && this.patches.fbm(cx / rule.patch.scale + PATCH_OFFSET[kind], cz / rule.patch.scale, 2) < rule.patch.threshold) continue
           for (let k = 0; k < count; k++) {
             const a = rnd() * Math.PI * 2
             const r = k === 0 ? 0 : spread * (0.4 + rnd() * 0.6)
             const x = cx + Math.cos(a) * r
             const z = cz + Math.sin(a) * r
+            // every roll is drawn before the keep-out test, so a rejection never shifts the stream
             const yaw = kind === 'jizo' ? Math.atan2(-l.x * side, -l.z * side) : rnd() * Math.PI * 2
-            const item = { kind, x, z, y: this.terrain.heightAt(x, z) - 0.04, yaw, scale: rule.scale[0] + rnd() * (rule.scale[1] - rule.scale[0]), tint: rnd(), keep: rnd() }
-            if (this.allowed(x, z, Math.max(ROAD_CLEARANCE, rule.band[0] - 0.6), rule.town)) out.push(item)
+            const scale = rule.scale[0] + rnd() * (rule.scale[1] - rule.scale[0])
+            const tint = rnd()
+            const keep = rnd()
+            if (this.allowed(x, z, clearance, rule.town)) out.push({ kind, x, z, y: this.terrain.heightAt(x, z) - 0.04, yaw, scale, tint, keep })
           }
         }
       }
@@ -189,12 +246,12 @@ export class RoadsideLayout {
       if (e.route === 'town') continue
       for (let d = CLUSTER_EVERY / 2; d < e.length; d += CLUSTER_EVERY) {
         const i = Math.min(e.points.length - 1, Math.round((d / e.length) * (e.points.length - 1)))
-        for (const side of [1, -1] as const) {
+        for (const side of SIDES) {
           const roll = rnd()
           const off = (12 + rnd() * 8) * side
           const n = 2 + Math.floor(rnd() * 3)
-          const pines = this.patches.at(e.points[i].x / 90, e.points[i].z / 90) > 0.6
           if (roll > 0.55) continue
+          const pines = this.patches.at(e.points[i].x / 90, e.points[i].z / 90) > 0.6
           const t = e.tangent(i)
           const l = leftOf(t.x, t.y)
           const cx = e.points[i].x + l.x * off
@@ -216,6 +273,4 @@ export class RoadsideLayout {
 }
 
 /** Per-kind offset into the patch noise so different kinds form different patches. */
-function patchOffset(kind: RoadsideKind): number {
-  return (Object.keys(ROADSIDE_KINDS) as RoadsideKind[]).indexOf(kind) * 17.3
-}
+const PATCH_OFFSET = Object.fromEntries((Object.keys(ROADSIDE_KINDS) as RoadsideKind[]).map((k, i) => [k, i * 17.3])) as Record<RoadsideKind, number>

@@ -11,6 +11,9 @@ const { VegetationModels } = await import('../../src/world/vegetationModels')
 const { InstancedProps, placeMatrix } = await import('../../src/world/instancedProps')
 const { GroundPaint } = await import('../../src/world/groundPaint')
 const { RoadNetwork } = await import('../../src/world/roadNetwork')
+const { Roadside } = await import('../../src/world/roadside')
+const { RoadsideLayout } = await import('../../src/world/roadsideLayout')
+const { TerrainHeights } = await import('../../src/world/terrain')
 
 type Builder = () => import('three').Object3D
 const MODELS: [string, Builder, number, [number, number]][] = [
@@ -103,5 +106,35 @@ describe('ground paint', () => {
     expect(paint.shadeAt(106, 100)).toBe(0)
     const lum = (col: import('three').Color) => col.r + col.g + col.b
     expect(lum(paint.colorAt(100, 100, 0, c.clone()))).toBeLessThan(lum(new GroundPaint().colorAt(100, 100, 0, c.clone())))
+  })
+})
+
+describe('roadside: quality tier at runtime', () => {
+  const roads = new RoadNetwork()
+  const layout = new RoadsideLayout(roads, new TerrainHeights(roads))
+  // a camera on the summit road, looking along it
+  const a = roads.edge('summit').points[40]
+  const b = roads.edge('summit').points[48]
+  const cam = new THREE.PerspectiveCamera(65, 1.8)
+  cam.position.set(a.x, a.y + 2, a.z)
+  cam.lookAt(b.x, b.y + 2, b.z)
+  cam.updateMatrixWorld()
+  const drawn = (r: import('../../src/world/roadside').Roadside) => r.sets.reduce((n, s) => (s.update(cam), n + s.drawCount), 0)
+
+  it('drops to fewer plants when the governor lowers the tier, without a rebuild', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {}) // the glTF rock cannot load here
+    const r = await Roadside.build(layout, 'high')
+    const high = drawn(r)
+    r.setTier('mid')
+    const mid = drawn(r)
+    r.setTier('low')
+    const low = drawn(r)
+    expect(mid).toBeLessThan(high)
+    expect(low).toBeLessThan(mid)
+    // the same as building for the low tier in the first place
+    expect(drawn(await Roadside.build(layout, 'low'))).toBe(low)
+    r.setTier('high')
+    expect(drawn(r)).toBe(high)
+    warn.mockRestore()
   })
 })

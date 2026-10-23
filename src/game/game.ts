@@ -259,6 +259,7 @@ export class Game {
       return
     }
     this.post.setTier(action.tier)
+    this.mountain?.setTier(action.tier)
     if (action.tier === 'low') {
       this.engine.setPixelRatioCap(1)
       this.visual.setHeadlights(false)

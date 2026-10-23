@@ -22,6 +22,8 @@ const CANOPY_CELL = 12
 /** The packed-dirt shoulder fades out between these distances from a road centreline. */
 const DIRT_FROM = 4.5
 const DIRT_TO = 8.5
+/** shared empty bucket for cells without canopies (no per-vertex allocation) */
+const NO_CANOPIES: readonly Canopy[] = []
 
 /**
  * Colours the terrain per vertex so the ground between props is never a flat
@@ -74,9 +76,9 @@ export class GroundPaint {
     let s = 0
     for (let dx = -1; dx <= 1; dx++) {
       for (let dz = -1; dz <= 1; dz++) {
-        for (const c of this.canopy.get(this.key(cx + dx, cz + dz)) ?? []) {
-          const d = Math.hypot(c.x - x, c.z - z)
-          if (d < c.r) s = Math.max(s, 1 - smooth(c.r * 0.35, c.r, d))
+        for (const c of this.canopy.get(this.key(cx + dx, cz + dz)) ?? NO_CANOPIES) {
+          const d2 = (c.x - x) ** 2 + (c.z - z) ** 2
+          if (d2 < c.r * c.r) s = Math.max(s, 1 - smooth(c.r * 0.35, c.r, Math.sqrt(d2)))
         }
       }
     }

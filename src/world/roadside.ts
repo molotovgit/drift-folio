@@ -3,7 +3,7 @@ import { ModelLibrary } from '../render/loadModel'
 import { palette } from '../render/palette'
 import type { QualityTier } from '../render/post'
 import { InstancedProps, placeMatrix } from './instancedProps'
-import type { RoadsideItem, RoadsideKind, RoadsideLayout } from './roadsideLayout'
+import { ROADSIDE_KINDS, type RoadsideItem, type RoadsideKind, type RoadsideLayout } from './roadsideLayout'
 import { VegetationModels } from './vegetationModels'
 
 /** How each kind is drawn: its model, how far it is visible, and its colour variants. */
@@ -17,8 +17,8 @@ interface KindLook {
 }
 
 const LOOKS: Readonly<Record<RoadsideKind, KindLook>> = {
-  grass: { model: () => VegetationModels.grass(), cullDistance: 110, tints: [palette.grassOlive, palette.grassGold, palette.grassMoss, palette.grassRust, palette.grassGold] },
-  flowers: { model: () => VegetationModels.flowers(), cullDistance: 110 },
+  grass: { model: () => VegetationModels.grass(), cullDistance: 80, tints: [palette.grassOlive, palette.grassGold, palette.grassMoss, palette.grassRust, palette.grassGold] },
+  flowers: { model: () => VegetationModels.flowers(), cullDistance: 80 },
   pampas: { model: () => VegetationModels.pampas(), cullDistance: 160 },
   fern: { model: () => VegetationModels.fern(), cullDistance: 140 },
   bush: { model: () => VegetationModels.bush(), cullDistance: 220, tints: [palette.foliageRed, palette.foliageOrange, palette.grassMoss, palette.foliageAmber, '#6a4a7a'] },
@@ -29,36 +29,50 @@ const LOOKS: Readonly<Record<RoadsideKind, KindLook>> = {
 
 /**
  * The roadside dressing (grass, flowers, susuki, ferns, shrubs, rocks, bamboo
- * groves and jizo statues): one culled InstancedProps per kind, thinned for
- * the quality tier. No colliders and no cast shadows; plants are pass-through.
+ * groves and jizo statues): one culled InstancedProps per kind. Every kind is
+ * built at the full (high-tier) count; a quality tier only thins what is
+ * drawn, so the perf governor can drop the tier at runtime (`setTier`).
+ * No colliders and no cast shadows; plants are pass-through.
  */
 export class Roadside {
-  readonly sets: InstancedProps[] = []
+  private readonly byKind = new Map<RoadsideKind, InstancedProps>()
 
   private constructor() {}
 
-  /** Build every kind's instances for `tier` (glTF rocks load asynchronously). */
+  /** Every kind's instanced set. */
+  get sets(): InstancedProps[] {
+    return [...this.byKind.values()]
+  }
+
+  /** Build every kind's instances (glTF rocks load asynchronously), thinned for `tier`. */
   static async build(layout: RoadsideLayout, tier: QualityTier): Promise<Roadside> {
     const roadside = new Roadside()
-    const byKind = new Map<RoadsideKind, RoadsideItem[]>()
-    for (const it of layout.forTier(tier)) {
-      let list = byKind.get(it.kind)
-      if (!list) byKind.set(it.kind, (list = []))
+    const itemsByKind = new Map<RoadsideKind, RoadsideItem[]>()
+    for (const it of layout.items) {
+      let list = itemsByKind.get(it.kind)
+      if (!list) itemsByKind.set(it.kind, (list = []))
       list.push(it)
     }
-    const sets = await Promise.all(
-      [...byKind].map(async ([kind, items]) => {
-        const look = LOOKS[kind]
-        const template = typeof look.model === 'string' ? await Roadside.loadOrNull(look.model) : look.model()
-        if (!template) return null
-        const transforms = items.map((it) => placeMatrix(it.x, it.y, it.z, it.yaw, it.scale))
-        const tints = look.tints?.map((t) => new THREE.Color(t))
-        const colors = tints ? items.map((it) => tints[Math.min(tints.length - 1, Math.floor(it.tint * tints.length))]) : undefined
-        return InstancedProps.fromTemplate(template, transforms, { shadows: false, receiveShadow: true, cullDistance: look.cullDistance, colors })
-      }),
-    )
-    for (const s of sets) if (s) roadside.sets.push(s)
+    const built = await Promise.all([...itemsByKind].map(async ([kind, items]) => [kind, await Roadside.buildKind(kind, items)] as const))
+    for (const [kind, set] of built) if (set) roadside.byKind.set(kind, set)
+    roadside.setTier(tier)
     return roadside
+  }
+
+  /** Thin every kind to its fraction for `tier` (low ⊂ mid ⊂ high: the per-item rolls are fixed). */
+  setTier(tier: QualityTier): void {
+    for (const [kind, set] of this.byKind) set.setThinning(ROADSIDE_KINDS[kind].tier[tier])
+  }
+
+  private static async buildKind(kind: RoadsideKind, items: readonly RoadsideItem[]): Promise<InstancedProps | null> {
+    const look = LOOKS[kind]
+    const template = typeof look.model === 'string' ? await Roadside.loadOrNull(look.model) : look.model()
+    if (!template) return null
+    const transforms = items.map((it) => placeMatrix(it.x, it.y, it.z, it.yaw, it.scale))
+    const tints = look.tints?.map((t) => new THREE.Color(t))
+    const colors = tints ? items.map((it) => tints[Math.min(tints.length - 1, Math.floor(it.tint * tints.length))]) : undefined
+    const keep = Float32Array.from(items, (it) => it.keep)
+    return InstancedProps.fromTemplate(template, transforms, { shadows: false, receiveShadow: true, cullDistance: look.cullDistance, colors, keep })
   }
 
   private static async loadOrNull(name: string): Promise<THREE.Object3D | null> {

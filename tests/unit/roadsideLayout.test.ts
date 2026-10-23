@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { fenceSpots } from '../../src/world/breakables'
-import { lampSpots } from '../../src/world/mountainLayout'
+import { lampSpots, landmarks } from '../../src/world/mountainLayout'
 import { RoadNetwork } from '../../src/world/roadNetwork'
-import { ROAD_CLEARANCE, ROADSIDE_KINDS, RoadsideLayout, type RoadsideKind } from '../../src/world/roadsideLayout'
+import { CHANNEL_MARGIN, LANDMARK_CLEARANCE, LOT_MARGIN, ROAD_CLEARANCE, ROADSIDE_KINDS, RoadsideLayout, type RoadsideKind } from '../../src/world/roadsideLayout'
 import { allChannels, channelDistance, PEAK } from '../../src/world/shortcutLayout'
 import { TerrainHeights } from '../../src/world/terrain'
 import { TOWN_LOTS } from '../../src/world/townLayout'
@@ -39,11 +39,19 @@ describe('roadside layout', () => {
     for (const t of layout.trees) expect(roads.index.nearest(t.x, t.z, 20)?.dist ?? 99).toBeGreaterThanOrEqual(10.5)
   })
 
-  it('keeps out of town lots, the peak, shortcut channels and the railway bed', () => {
+  it('keeps the full margin from town lots, the peak, shortcut channels and the railway bed', () => {
     const channels = allChannels(roads)
     for (const it of all) {
-      for (const l of [...TOWN_LOTS, PEAK]) expect(Math.hypot(it.x - l.x, it.z - l.z)).toBeGreaterThan(l.r)
-      for (const c of channels) expect(channelDistance(c, it.x, it.z).dist, c.id).toBeGreaterThan(c.width / 2)
+      for (const l of [...TOWN_LOTS, PEAK]) expect(Math.hypot(it.x - l.x, it.z - l.z)).toBeGreaterThanOrEqual(l.r + LOT_MARGIN - 1e-9)
+      for (const c of channels) expect(channelDistance(c, it.x, it.z).dist, c.id).toBeGreaterThanOrEqual(c.width / 2 + CHANNEL_MARGIN - 1e-9)
+    }
+  })
+
+  it('clears each landmark by its own footprint', () => {
+    for (const l of landmarks(roads, terrain)) {
+      const r = LANDMARK_CLEARANCE[l.model]
+      expect(r, l.model).toBeGreaterThan(0)
+      for (const it of all) expect(Math.hypot(it.x - l.x, it.z - l.z), l.model).toBeGreaterThanOrEqual(r - 1e-9)
     }
   })
 
@@ -63,12 +71,10 @@ describe('roadside layout', () => {
     for (const it of layout.items) expect(Math.abs(it.y - terrain.heightAt(it.x, it.z))).toBeLessThan(0.1)
   })
 
-  it('is deterministic (same counts and positions every build)', () => {
+  it('is deterministic (identical items and trees every build)', () => {
     const again = new RoadsideLayout(roads, terrain)
-    expect(again.items.length).toBe(layout.items.length)
-    expect(again.trees.length).toBe(layout.trees.length)
-    expect(again.items[123]).toEqual(layout.items[123])
-    expect(again.items.at(-1)).toEqual(layout.items.at(-1))
+    expect(again.items).toEqual(layout.items)
+    expect(again.trees).toEqual(layout.trees)
   })
 
   it('thins deterministically by quality tier: low ⊂ mid ⊂ high', () => {
