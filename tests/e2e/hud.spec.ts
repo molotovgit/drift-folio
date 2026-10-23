@@ -14,15 +14,16 @@ test('drifting shows the Most Wanted counter, then banks it (M4)', async ({ page
   await expect.poll(() => page.locator('.hud__speed-num').textContent(), { timeout: 60_000 }).not.toBe('0')
   await page.waitForFunction(() => (window as unknown as { __drift: Debug }).__drift.telemetry().speed > 16, null, { timeout: 60_000 })
 
-  // handbrake drift: running score appears in the HUD
+  // drift axis held (L, + right steer): running score appears in the HUD. The angle
+  // only lasts while the drift axis is held, so keep it down until the score is live.
   await page.keyboard.down('KeyD')
-  await page.keyboard.down('Space')
+  await page.keyboard.down('KeyL')
   await page.waitForFunction(() => (window as unknown as { __drift: Debug }).__drift.telemetry().drifting, null, { timeout: 60_000 })
-  await page.keyboard.up('Space')
   await expect(page.locator('.hud__score.is-live')).toBeVisible({ timeout: 30_000 })
   await expect.poll(async () => Number((await page.locator('.hud__running').textContent())?.replace(/\D/g, '') || 0), { timeout: 30_000 }).toBeGreaterThan(0)
 
-  // straighten out: after 2 s without drifting the run banks
+  // straighten out (release the drift axis): after 2 s without drifting the run banks
+  await page.keyboard.up('KeyL')
   await page.keyboard.up('KeyD')
   await page.keyboard.up('KeyW')
   await expect.poll(() => dbg(page, () => (window as unknown as { __drift: Debug }).__drift.score().banked), { timeout: 90_000 }).toBeGreaterThan(0)

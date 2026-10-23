@@ -85,7 +85,7 @@ function trace(t: number, tel: Telemetry, c: ControlState, driver: RacingLineDri
   const off = roads.index.nearest(tel.pos.x, tel.pos.z)?.dist ?? Infinity
   console.log(
     `t=${t.toFixed(1)} s=${driver.progress.toFixed(0)}/${driver.length.toFixed(0)} v=${tel.speed.toFixed(1)} plan=${driver.targetSpeed().toFixed(1)} ` +
-      `off=${off.toFixed(1)} road=${tel.onRoad} slip=${tel.slipDeg.toFixed(0)} steer=${c.steer.toFixed(2)} thr=${c.throttle.toFixed(2)} brk=${c.brake.toFixed(2)} hb=${c.handbrake}`,
+      `off=${off.toFixed(1)} road=${tel.onRoad} slip=${tel.slipDeg.toFixed(0)} steer=${c.steer.toFixed(2)} drift=${c.drift.toFixed(2)} thr=${c.throttle.toFixed(2)} brk=${c.brake.toFixed(2)}`,
   )
 }
 
@@ -126,6 +126,7 @@ function drive(opts: Partial<RacingLineOptions>): RunResult {
     // same rule as Game: any chassis contact-force event against a rail is a crash
     events.drainContactForceEvents((e) => {
       if (surfaceOf.get(e.collider1()) !== 'rail' && surfaceOf.get(e.collider2()) !== 'rail') return
+      car.grazeWall(e.maxForceDirection()) // same rail glance as Game
       railHits++
       if (TRACE) console.log(`  rail hit at t=${time().toFixed(2)} s, ${driver.progress.toFixed(0)} m, ${e.totalForceMagnitude().toFixed(0)} N`)
     })

@@ -14,7 +14,7 @@ Why now: the subdomain `amirbek.is-a.dev` is free, and is-a.dev only accepts sit
 ## 2. Goals
 
 - One continuous drivable world: summit start, three descents, base town, road back up.
-- Drift handling that is fun with a keyboard within 30 seconds: handbrake, counter-steer assist, readable slides.
+- Drift handling that is fun with a keyboard within 30 seconds: twin-axis steer + drift (body angle on its own axis, Inertial-Drift style), no automatic assist, readable slides.
 - Need for Speed: Most Wanted style drift scoring (counter, multiplier, bank, crash).
 - Nine project corners driven by a single data file.
 - Six shortcuts and a handful of secrets that reward exploring.
@@ -91,8 +91,8 @@ About copy: the profile README line "Mostly systems work — an Android port of 
 
 ## 8. Gameplay rules
 
-- **Controls (keyboard):** W/↑ throttle, S/↓ brake/reverse, A D/← → steer, Space handbrake, Shift clutch kick, R reset to last checkpoint, C camera toggle, H horn, M mute.
-- **Controls (touch):** left thumb virtual stick for steer, right side buttons gas, brake, handbrake.
+- **Controls (keyboard):** W/↑ throttle, S/↓ brake/reverse, A D/← → steer (the line), J L drift left/right (the body angle, twin-axis), Space handbrake = drift toward the steer direction, R reset to last checkpoint, C camera toggle, H horn, M mute. **Gamepad:** left stick steer, right stick drift, RT/LT throttle/brake, A handbrake-drift, Start pause.
+- **Controls (touch):** left thumb virtual stick for steer, right side drift slider plus gas, brake and DRIFT (handbrake-drift) buttons.
 - **Gamepad:** standard mapping supported.
 - **Camera:** chase camera behind the car following velocity direction, not heading, so slides read. Toggle to a high Bruno-style camera with C.
 - **Drift:** slip angle β = angle between heading and velocity. Drifting when |β| ≥ 12° and speed ≥ 8 m/s.
