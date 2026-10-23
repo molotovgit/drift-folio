@@ -22,6 +22,7 @@ describe('road ribbons at junctions', () => {
     const mid = Math.floor(e.points.length / 2)
     expect(lifted[mid * 6 + 1]).toBeCloseTo(positions[mid * 6 + 1], 6)
     expect(lifted[1] - positions[1]).toBeGreaterThan(0.03)
-    expect(positions[1]).toBeCloseTo(e.points[0].y, 6)
+    // vertex 0 is the left edge, on the (junction-banked) surface
+    expect(positions[1]).toBeCloseTo(e.surfaceY(0, e.width / 2), 5)
   })
 })

@@ -10,6 +10,8 @@ import { RAIL_MAX_RADIUS } from './guardRails'
 /** Fence segments are 3 m long; each run is FENCE_RUN segments. */
 const FENCE_LENGTH = 3
 const FENCE_RUN = 8
+/** fence runs keep this far (along the road) from either end of the Automation Pass */
+const JUNCTION_CLEAR = 60
 const FENCE_OFFSET = 6.2
 const MAC_MINIS = 5
 
@@ -27,6 +29,8 @@ export function fenceSpots(roads: RoadNetwork): FenceSpot[] {
   const candidates = e.points
     .map((_, i) => i)
     .filter((i) => Math.abs(e.radius[i]) > RAIL_MAX_RADIUS && Math.abs(e.radius[i]) < 160)
+    // not where the road bends into a junction: a run there would stand in the other roads
+    .filter((i) => e.dist[i] > JUNCTION_CLEAR && e.length - e.dist[i] > JUNCTION_CLEAR)
     .sort((a, b) => Math.abs(e.radius[a]) - Math.abs(e.radius[b]))
   const centres: number[] = []
   for (const i of candidates) {
