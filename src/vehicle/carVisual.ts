@@ -1,10 +1,10 @@
 import * as THREE from 'three/webgpu'
 import { palette } from '../render/palette'
-import type { DriftCar } from './driftCar'
+import type { DriftCar, Pose } from './driftCar'
 
 export interface CarVisual {
   root: THREE.Object3D
-  sync(car: DriftCar): void
+  sync(car: DriftCar, pose: Pose): void
 }
 
 /** Grey-box car: a teal box with four wheels. Replaced by fd.glb in M2. */
@@ -38,15 +38,14 @@ export function createBoxCarVisual(): CarVisual {
 
   return {
     root: scene,
-    sync(car) {
-      const p = car.body.translation()
-      const r = car.body.rotation()
-      root.position.set(p.x, p.y, p.z)
-      root.quaternion.set(r.x, r.y, r.z, r.w)
-      q.set(r.x, r.y, r.z, r.w)
+    sync(car, pose) {
+      root.position.set(pose.pos.x, pose.pos.y, pose.pos.z)
+      root.quaternion.set(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w)
+      q.set(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w)
       car.wheels().forEach((w, i) => {
         const m = wheels[i]
-        m.position.set(w.pos.x, w.pos.y, w.pos.z)
+        const p = pose.wheels[i]
+        m.position.set(p.x, p.y, p.z)
         yawQ.setFromAxisAngle(Y, w.steerRad)
         spinQ.setFromAxisAngle(X, w.spin)
         m.quaternion.copy(q).multiply(yawQ).multiply(spinQ)

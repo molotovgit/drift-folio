@@ -98,7 +98,8 @@ export function createInput(target: EventTarget, getGamepads: () => (Gamepad | n
       if (pad) {
         const btn = (i: number) => pad.buttons[i]?.value ?? 0
         const ax = pad.axes[0] ?? 0
-        if (Math.abs(ax) > 0.12) s.steer = clamp(ax, -1, 1)
+        const dz = 0.12
+        if (Math.abs(ax) > dz) s.steer = clamp((Math.sign(ax) * (Math.abs(ax) - dz)) / (1 - dz), -1, 1)
         s.throttle = Math.max(s.throttle, btn(7))
         s.brake = Math.max(s.brake, btn(6))
         s.handbrake ||= btn(0) > 0.5

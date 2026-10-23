@@ -104,4 +104,46 @@ describe('FD drift handling (headless physics)', () => {
     const t = car.telemetry()
     for (const v of [t.pos.x, t.pos.y, t.pos.z, t.speed, t.slipDeg]) expect(Number.isFinite(v)).toBe(true)
   })
+
+  it('full throttle with light steer grips instead of sliding (traction control)', () => {
+    const { run } = rig()
+    run(0.5, {})
+    run(2, { throttle: 1 })
+    let maxSlip = 0
+    run(3, { throttle: 1, steer: 0.3 }, (c) => (maxSlip = Math.max(maxSlip, Math.abs(c.telemetry().slipDeg))))
+    expect(maxSlip).toBeLessThan(12)
+  })
+
+  it('a clutch kick under throttle and steer breaks traction into a drift', () => {
+    const { run } = rig()
+    run(0.5, {})
+    run(3, { throttle: 1 })
+    let drifted = false
+    run(0.1, { throttle: 1, steer: 1, clutch: true })
+    run(1.5, { throttle: 1, steer: 1 }, (c) => (drifted ||= c.telemetry().drifting))
+    expect(drifted).toBe(true)
+  })
+
+  it('pose(alpha) blends between the last two ticks', () => {
+    const { car, run } = rig()
+    run(0.5, {})
+    run(2, { throttle: 1 })
+    const a = car.pose(0)
+    const b = car.pose(1)
+    const mid = car.pose(0.5)
+    expect(mid.pos.z).toBeCloseTo((a.pos.z + b.pos.z) / 2, 5)
+    expect(b.pos.z).toBeGreaterThan(a.pos.z)
+  })
+
+  it('reset clears motion and lands on four wheels', () => {
+    const { car, run } = rig()
+    run(0.5, {})
+    run(3, { throttle: 1, steer: 1, handbrake: true })
+    car.resetTo({ x: 10, y: 0, z: 10 }, 1)
+    run(1.5, {})
+    const t = car.telemetry()
+    expect(t.wheelsOnGround).toBe(4)
+    expect(t.speed).toBeLessThan(0.2)
+    expect(t.yaw).toBeCloseTo(1, 1)
+  })
 })

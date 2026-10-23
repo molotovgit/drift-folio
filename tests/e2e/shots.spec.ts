@@ -2,7 +2,8 @@ import { test } from '@playwright/test'
 
 // Not an assertion test: captures review screenshots into test-results/shots/.
 // Run with: SHOTS=1 npx playwright test shots
-test.skip(!process.env.SHOTS, 'screenshots only when SHOTS=1')
+const env = (globalThis as unknown as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
+test.skip(!env.SHOTS, 'screenshots only when SHOTS=1')
 
 test('review screenshots', async ({ page }) => {
   test.setTimeout(180_000)

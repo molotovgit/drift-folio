@@ -10,6 +10,7 @@ import { isSkipOpen, openSkipOverlay } from './ui/skip'
 import { createBoxCarVisual } from './vehicle/carVisual'
 import { createDriftCar } from './vehicle/driftCar'
 import { buildGreybox } from './world/greybox'
+import { groundHeight } from './world/ground'
 
 const debug = new URLSearchParams(location.search).has('debug')
 
@@ -55,12 +56,14 @@ async function boot() {
     if (controls.camera) cam.toggleMode()
     if (controls.reset) {
       const t = car.telemetry()
-      car.resetTo({ x: t.pos.x, y: 0, z: t.pos.z }, t.yaw)
+      car.resetTo({ x: t.pos.x, y: groundHeight(world, t.pos.x, t.pos.z, car.body), z: t.pos.z }, t.yaw)
+      cam.snap()
     }
-    if (!paused) loop.advance(dt)
+    const alpha = paused ? 1 : loop.advance(dt)
     greybox.update()
-    visual.sync(car)
-    const t = car.telemetry()
+    const pose = car.pose(alpha)
+    visual.sync(car, pose)
+    const t = { ...car.telemetry(), pos: pose.pos }
     cam.update(t, Math.min(dt, MAX_FRAME))
     sun.position.set(t.pos.x - 20, 40, t.pos.z + 15)
     sun.target.position.set(t.pos.x, 0, t.pos.z)
