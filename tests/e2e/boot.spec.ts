@@ -49,3 +49,19 @@ test('a lost WebGL context that does not restore within 3 s opens the overlay', 
   await expect(page.locator('#skip-overlay')).toBeVisible({ timeout: 4000 })
   await expect(page.locator('#skip-reason')).toContainText('graphics driver reset')
 })
+
+test('a WebGL context restored inside the window reloads the page into a working scene', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true }))
+  await page.goto('/')
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1')
+  const reloaded = page.waitForEvent('load')
+  await page.evaluate(() => {
+    const gl = document.querySelector<HTMLCanvasElement>('#scene')!.getContext('webgl2')!
+    const ext = gl.getExtension('WEBGL_lose_context')!
+    ext.loseContext()
+    setTimeout(() => ext.restoreContext(), 800)
+  })
+  await reloaded
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1')
+  await expect(page.locator('#skip-overlay')).toHaveCount(0)
+})

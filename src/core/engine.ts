@@ -78,9 +78,18 @@ export async function createEngine(canvas: HTMLCanvasElement, tier: Exclude<GpuT
   })
   // three calls onDeviceLost for WebGPU device loss (except intentional destroy)
   // and for WebGL context loss. WebGL can come back; WebGPU loss is final.
+  // three never rebuilds GPU resources after a WebGL restore, so a restored
+  // context is handled by reloading the page (scores live in storage).
   const guard = createContextGuard(() => lostCbs.forEach((cb) => cb()))
-  renderer.onDeviceLost = () => guard.lost()
-  const onRestored = () => guard.restored()
+  const threeOnLost = renderer.onDeviceLost.bind(renderer) // marks the renderer as lost
+  renderer.onDeviceLost = (info) => {
+    threeOnLost(info)
+    guard.lost()
+  }
+  const onRestored = () => {
+    guard.restored()
+    location.reload()
+  }
   canvas.addEventListener('webglcontextrestored', onRestored)
 
   return {
