@@ -16,7 +16,7 @@ import { CardPanel } from '../ui/card'
 import { Hud } from '../ui/hud'
 import { skipOverlay } from '../ui/skip'
 import { SafeStorage } from '../util/storage'
-import { BoxCarVisual, FdCarVisual, type CarVisual } from '../vehicle/carVisual'
+import { BoxCarVisual, FdCarVisual, HyperVCarVisual, type CarVisual } from '../vehicle/carVisual'
 import { DriftCar, surfaceOf, type Telemetry } from '../vehicle/driftCar'
 import type { Checkpoint } from '../world/checkpoints'
 import { greyboxDressing, PropPlacer } from '../world/dressing'
@@ -24,6 +24,11 @@ import { Greybox } from '../world/greybox'
 import { MountainWorld } from '../world/mountainWorld'
 import { ProjectCorners } from '../world/projectCorners'
 import { BaseTown } from '../world/baseTown'
+import { Shortcuts } from '../world/shortcuts'
+import { SHORTCUT_NAMES, ShortcutDiscovery } from './discovery'
+import { GhostLap } from './ghostLap'
+import { KeySequence } from './easterEggs'
+import { Breakables } from '../world/breakables'
 import { formatTime } from './session'
 import type { GameOptions } from './options'
 import { RouteRuns } from './routeRun'
@@ -63,6 +68,13 @@ export class Game {
   /** the base town (mountain only) and the link pad the car is parked on */
   private readonly town: BaseTown | null
   private padUrl: string | null = null
+  /** M7: shortcuts, which ones were found, and the Systems Drop ghost */
+  private readonly shortcuts: Shortcuts | null
+  private readonly discovery: ShortcutDiscovery
+  private readonly ghost: GhostLap
+  private inDirt = false
+  /** fences and the Mac mini convoy */
+  private readonly breakables: Breakables | null
   /** Rapier reports chassis contacts above the force threshold here (crash rule) */
   private readonly events = new RAPIER.EventQueue(true)
   private railHit = false
@@ -71,7 +83,7 @@ export class Game {
 
   private constructor(
     private readonly engine: Engine,
-    private readonly visual: CarVisual,
+    private visual: CarVisual,
     quality: QualityTier,
     options: GameOptions,
   ) {
@@ -105,6 +117,18 @@ export class Game {
     const storage = new SafeStorage('drift-folio:')
     this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(storage))
     this.town = this.mountain ? new BaseTown(scene, this.world, storage) : null
+    this.shortcuts = this.mountain ? new Shortcuts(scene, this.world, this.mountain.roads) : null
+    this.discovery = new ShortcutDiscovery(storage)
+    this.ghost = new GhostLap(scene, storage)
+    const mountainForProps = this.mountain
+    this.breakables = mountainForProps ? new Breakables(scene, this.world, mountainForProps.roads, (x, z) => mountainForProps.heightAt(x, z)) : null
+    // ↑↑↓↓←→←→BA swaps the FD for a Hyper-V host on wheels
+    new KeySequence(() => this.swapVisual(new HyperVCarVisual(), 'Hyper-V host on wheels')).listen(window)
+    this.session.runListener = {
+      start: (route) => route === 'systems' && this.ghost.start(),
+      finish: (route, time) => route === 'systems' && this.onSystemsFinish(time),
+      abandon: () => this.ghost.cancel(),
+    }
     // opening a link needs a real key press (popup blockers), so pads ask for Enter
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && this.padUrl && !skipOverlay.isOpen) window.open(this.padUrl, '_blank', 'noopener')
@@ -137,7 +161,9 @@ export class Game {
   private async dress(): Promise<void> {
     if (this.mountain) {
       const mountain = this.mountain
-      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z)), this.town?.build()])
+      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z)), this.town?.build(), this.shortcuts?.build(), this.ghost.load(), this.breakables?.build()])
+      for (const id of this.discovery.all()) this.town?.lightLantern(ShortcutDiscovery.lanternOf(id))
+      if (this.ghost.beaten) this.shortcuts?.openPeak()
       this.lamps.setAnchors([...this.mountain.lamps])
     } else {
       const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
@@ -148,10 +174,13 @@ export class Game {
   /** One fixed physics tick. */
   private physicsTick(h: number): void {
     this.car.update(this.controls, h)
+    this.ghost.tick(h)
     this.world.step(this.events)
     // a hard chassis contact with a guard rail is a crash (spec §8)
     this.events.drainContactForceEvents((e) => {
-      if (surfaceOf.get(e.collider1()) === 'rail' || surfaceOf.get(e.collider2()) === 'rail') {
+      // hard hits on guard rails and the train both crash the running score
+      const hit = (h: number) => surfaceOf.get(h) === 'rail' || surfaceOf.get(h) === 'train'
+      if (hit(e.collider1()) || hit(e.collider2())) {
         if (!this.railHit) this.railHits++
         this.railHit = true
       }
@@ -173,7 +202,9 @@ export class Game {
     const t: Telemetry = { ...this.car.telemetry(), pos: pose.pos }
     if (!paused) {
       if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
-      this.session.update({ t, dt, railHit: this.railHit, inShortcutZone: false })
+      if (this.shortcuts) this.handleShortcuts(t, dt)
+      if (this.breakables?.update().macMiniHit) this.hud.hint('commit by Mac Mini 5')
+      this.session.update({ t, dt, railHit: this.railHit, inShortcutZone: this.inDirt })
       this.railHit = false
       this.mountain?.signposts.update(t)
       if (this.town) this.handleTown(t)
@@ -191,6 +222,38 @@ export class Game {
     // effects after the camera and lamps so billboards/wrapping use this frame's view
     this.updateEffects(t, fxDt)
     this.post.render(t.speed)
+  }
+
+  /** Shortcut events → discovery, lanterns, HUD, the secret car. */
+  private handleShortcuts(t: Telemetry, dt: number): void {
+    const ev = this.shortcuts!.update(t, dt, performance.now() / 1000)
+    this.inDirt = ev.inDirt
+    if (ev.found && this.discovery.discover(ev.found)) {
+      this.town?.lightLantern(ShortcutDiscovery.lanternOf(ev.found))
+      this.hud.hint(`Shortcut found: ${SHORTCUT_NAMES[ev.found]} (${this.discovery.count}/6)`)
+    }
+    if (ev.secretCar) {
+      this.visual.setPaint('#ffc04d')
+      this.hud.hint('Secret livery unlocked')
+    }
+  }
+
+  /** Replace the car's look (easter egg); physics is unchanged. */
+  private swapVisual(next: CarVisual, hint: string): void {
+    this.engine.scene.remove(this.visual.root)
+    this.visual = next
+    next.setHeadlights(true)
+    this.engine.scene.add(next.root)
+    this.hud.hint(hint)
+  }
+
+  /** A Systems Drop run ended: did it beat the ghost? */
+  private onSystemsFinish(time: number): void {
+    if (this.ghost.finish(time)) {
+      this.shortcuts?.openPeak()
+      this.hud.routeBanner('GHOST BEATEN')
+      this.hud.hint('The trail behind the summit torii is open')
+    }
   }
 
   /** Town events → HUD (pads, lots, gymkhana). */
@@ -294,6 +357,9 @@ export class Game {
       openCard: () => this.cards.openId,
       showCard: (id: string) => this.cards.show(id as never),
       padUrl: () => this.padUrl,
+      shortcutsFound: () => this.discovery.all(),
+      ghostBeaten: () => this.ghost.beaten,
+      peakOpen: () => this.shortcuts?.peakOpen ?? false,
       gymkhanaBest: () => this.town?.gymkhana.best ?? null,
       corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index, clip: s.clip, turn: s.turn })) ?? [],
       route: () => this.session.route,

@@ -24,6 +24,13 @@ const BANNER: Partial<Record<RoadRoute, RouteId>> = {
 /** How far from a centreline the car may be and still count as "on" that road. */
 const ROUTE_SNAP = 14
 
+/** Optional observer for run lifecycle (the ghost lap uses it). */
+export interface RunListener {
+  start(route: RunRouteId): void
+  finish(route: RunRouteId, time: number): void
+  abandon(): void
+}
+
 export interface SessionInput {
   t: Telemetry
   /** frame time, seconds (the caller skips paused frames) */
@@ -49,6 +56,8 @@ export class DriftSession {
    * run times match simulated time and a pause or a background tab never counts.
    */
   private clock = 0
+  /** notified when runs start, finish or are abandoned */
+  runListener: RunListener | null = null
 
   constructor(
     private readonly roads: RoadNetwork | null,
@@ -88,13 +97,18 @@ export class DriftSession {
     // the run counts for the themed route the car is actually on (forks, shortcuts)
     else if (this.runRoute && runRoute) this.runRoute = runRoute
     if (route === 'town' && this.runRoute) this.finishRun(now)
-    if (route === 'summit' || route === 'return') this.runRoute = null // went back up: abandon
+    if ((route === 'summit' || route === 'return') && this.runRoute) {
+      // went back up: abandon
+      this.runRoute = null
+      this.runListener?.abandon()
+    }
   }
 
   private startRun(route: RunRouteId, now: number): void {
     this.runRoute = route
     this.bankedAtRunStart = this.score.state().banked
     this.runs.start(now)
+    this.runListener?.start(route)
   }
 
   private finishRun(now: number): void {
@@ -104,7 +118,9 @@ export class DriftSession {
     const result = this.runs.finish(this.runRoute!, now, points)
     const name = routeNames[this.runRoute!]
     this.hud.hint(`${name}: ${formatTime(result.time)} · ${points.toLocaleString('en-US')} pts${result.newBest ? ' · new best' : ''}`)
+    const route = this.runRoute!
     this.runRoute = null
+    this.runListener?.finish(route, result.time)
   }
 }
 
