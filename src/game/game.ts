@@ -12,6 +12,7 @@ import { SceneLighting } from '../render/lighting'
 import { LightPool } from '../render/lightPool'
 import { PostPipeline, type QualityTier } from '../render/post'
 import { SkyDome } from '../render/sky'
+import { CardPanel } from '../ui/card'
 import { Hud } from '../ui/hud'
 import { skipOverlay } from '../ui/skip'
 import { SafeStorage } from '../util/storage'
@@ -21,6 +22,7 @@ import type { Checkpoint } from '../world/checkpoints'
 import { greyboxDressing, PropPlacer } from '../world/dressing'
 import { Greybox } from '../world/greybox'
 import { MountainWorld } from '../world/mountainWorld'
+import { ProjectCorners } from '../world/projectCorners'
 import type { GameOptions } from './options'
 import { RouteRuns } from './routeRun'
 import { DriftSession } from './session'
@@ -52,6 +54,10 @@ export class Game {
   private readonly pad: Greybox | null
   private controls: ControlState = idleControls()
   private readonly session: DriftSession
+  private readonly hud: Hud
+  private readonly cards: CardPanel
+  /** the nine project corners (mountain only) */
+  private readonly corners: ProjectCorners | null
   /** Rapier reports chassis contacts above the force threshold here (crash rule) */
   private readonly events = new RAPIER.EventQueue(true)
   private railHit = false
@@ -86,7 +92,10 @@ export class Game {
     const mountain = this.mountain
     this.camera = new ChaseCamera(engine.camera, mountain ? (x, z) => mountain.heightAt(x, z) : undefined)
     const hudRoot = document.querySelector<HTMLElement>('#hud')!
-    this.session = new DriftSession(this.mountain?.roads ?? null, new Hud(hudRoot), new RouteRuns(new SafeStorage('drift-folio')))
+    this.hud = new Hud(hudRoot)
+    this.cards = new CardPanel(hudRoot)
+    this.session = new DriftSession(this.mountain?.roads ?? null, this.hud, new RouteRuns(new SafeStorage('drift-folio')))
+    this.corners = this.mountain ? new ProjectCorners(scene, this.mountain.roads) : null
     this.loop = new FixedStepLoop(PHYSICS_STEP, options.maxFrame, (h) => this.physicsTick(h))
     engine.onFrame((dt) => this.frame(dt))
   }
@@ -113,7 +122,8 @@ export class Game {
   /** Place the world's props, then hand the lamp bulbs to the light pool. */
   private async dress(): Promise<void> {
     if (this.mountain) {
-      await this.mountain.dress()
+      const mountain = this.mountain
+      await Promise.all([mountain.dress(), this.corners?.build((x, z) => mountain.heightAt(x, z))])
       this.lamps.setAnchors([...this.mountain.lamps])
     } else {
       const props = await PropPlacer.place(this.engine.scene, greyboxDressing())
@@ -148,6 +158,9 @@ export class Game {
       if (this.mountain?.checkpoints.update(t, dt)) this.resetCar()
       this.session.update({ t, dt, now: performance.now() / 1000, railHit: this.railHit, inShortcutZone: false })
       this.railHit = false
+      const corner = this.corners?.update(t)
+      if (corner?.opened) this.cards.show(corner.opened)
+      else if (corner?.hinted) this.hud.hint('Drift this corner to open the card')
     }
 
     this.camera.update(t, dt)
@@ -223,6 +236,16 @@ export class Game {
         this.camera.snap()
         return true
       },
+      /** jump to a road sample index (screenshots/tests) */
+      teleportIndex: (edgeId: string, index: number) => {
+        const e = this.mountain?.roads.edge(edgeId)
+        if (!e) return false
+        const i = Math.max(0, Math.min(e.points.length - 1, index))
+        const t = e.tangent(i)
+        this.car.resetTo(e.points[i], Math.atan2(t.x, t.y))
+        this.camera.snap()
+        return true
+      },
       /** first hairpin apex of an edge as a 0..1 fraction (or -1) */
       hairpinFrac: (edgeId: string) => {
         const e = this.mountain?.roads.edge(edgeId)
@@ -230,6 +253,9 @@ export class Game {
         return e && i !== undefined ? i / (e.points.length - 1) : -1
       },
       score: () => this.session.score.state(),
+      openCard: () => this.cards.openId,
+      showCard: (id: string) => this.cards.show(id as never),
+      corners: () => this.corners?.spots.map((s) => ({ id: s.id, edgeId: s.edgeId, index: s.index })) ?? [],
       route: () => this.session.route,
     }
   }
