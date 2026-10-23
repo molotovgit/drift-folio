@@ -1,6 +1,6 @@
 import type RAPIER from '@dimforge/rapier3d-compat'
 import type * as THREE from 'three/webgpu'
-import type { CardPanel } from '../ui/card'
+import { isControl, type CardPanel } from '../ui/card'
 import type { Hud } from '../ui/hud'
 import type { TouchControls } from '../ui/touch'
 import { skipOverlay } from '../ui/skip'
@@ -61,9 +61,11 @@ export class MountainFeatures {
     }
     // opening a link needs a real key press (popup blockers), so pads ask for Enter
     window.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || e.repeat || !this.padUrl || skipOverlay.isOpen) return
+      if (e.key !== 'Enter' || e.repeat || e.defaultPrevented || !this.padUrl || skipOverlay.isOpen) return
       // Enter on a focused button or link (a card's "go", the skip link) belongs to that control
-      if (e.target instanceof Element && e.target.closest('a, button, input, textarea, select')) return
+      if (isControl(document.activeElement)) return
+      // the pad owns this Enter: an open project card must not open its link as well
+      e.preventDefault()
       window.open(this.padUrl, '_blank', 'noopener')
     })
   }

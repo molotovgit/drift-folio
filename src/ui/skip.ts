@@ -1,4 +1,5 @@
 import { about, projects, routeNames } from '../content/projects'
+import { SafeUrl } from '../util/safeUrl'
 
 export type SkipReason = 'user' | 'no-gpu' | 'slow' | 'context-lost'
 
@@ -81,7 +82,10 @@ export class SkipOverlay {
     const grid = el('div', 'skip__cards')
     for (const p of projects) grid.append(this.card(p))
     const links = el('p', 'skip__links')
-    for (const l of about.links) links.append(externalLink(l.label, l.url))
+    for (const l of about.links) {
+      const url = SafeUrl.https(l.url)
+      if (url) links.append(externalLink(l.label, url))
+    }
 
     const inner = el('div', 'skip__inner')
     inner.append(close, reason, title, el('p', 'skip__handle', `@${about.handle}`), el('p', 'skip__line', about.line), skills, grid, links)
@@ -106,7 +110,9 @@ export class SkipOverlay {
     const chips = el('ul', 'card__stack')
     for (const s of p.stack) chips.append(el('li', undefined, s))
     card.append(top, el('h2', 'card__title', p.title), el('p', 'card__blurb', p.blurb), chips)
-    if (p.public && p.url) card.append(externalLink('View on GitHub', p.url, 'card__go'))
+    // only GitHub links are ever opened from a card
+    const url = p.public ? SafeUrl.https(p.url, 'https://github.com/') : null
+    if (url) card.append(externalLink('View on GitHub', url, 'card__go'))
     return card
   }
 

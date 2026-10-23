@@ -149,7 +149,6 @@ export class BaseTown {
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.3, 2.5, 4.6).setTranslation(-6.1, 2.5, 0), body)
   }
 
-  /** Skills as tyre stacks: height = how much the skill is used (spec §7). */
   /** The about links that are safe to open (https only); bad ones are dropped with a warning. */
   private static safeLinks(): { label: string; url: string }[] {
     return about.links.flatMap((l) => {
@@ -159,6 +158,7 @@ export class BaseTown {
     })
   }
 
+  /** Skills as tyre stacks: height = how much the skill is used (spec §7). */
   private placeTyreRack(tyre: THREE.Group): void {
     const y0 = lot('plaza').y
     about.skills.forEach((s, i) => {

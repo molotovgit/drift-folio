@@ -10,8 +10,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   return e
 }
 
-/** Focused element that handles Enter itself (so the panel must not). */
-function isControl(e: Element | null): boolean {
+/** Focused element that handles Enter itself (so window-level Enter handlers must not). */
+export function isControl(e: Element | null): boolean {
   if (!e) return false
   return e.matches('a[href], button, input, select, textarea, [contenteditable=""], [contenteditable="true"]')
 }

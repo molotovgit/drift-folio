@@ -66,5 +66,8 @@ test.describe('touch controls', () => {
     await expect(open).toHaveAttribute('href', 'https://github.com/molotovgit')
     await expect(open).toHaveAttribute('target', '_blank')
     await expect(page.locator('.hud__hint')).toContainText('Tap OPEN for GitHub', { timeout: 30_000 })
+    // driving off the pad takes the link away again
+    await page.evaluate(([x, z]) => (window as unknown as { __drift: { teleportTo: (x: number, z: number) => void } }).__drift.teleportTo(x, z), [LINK_PADS.x, LINK_PADS.z0 - 12])
+    await expect(open).toBeHidden({ timeout: 30_000 })
   })
 })
