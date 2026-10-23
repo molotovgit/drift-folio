@@ -33,12 +33,10 @@ export interface WheelContext {
   left: Vec3
   forwardSpeed: number
   controls: ControlState
-  /** rear lateral grip multiplier (handbrake / clutch kick / power-over) */
-  rearGripScale: number
+  /** share of the horizontal tyre forces the wheels apply (1 - drift controller blend) */
+  tyreScale: number
   /** total drive force at the rear axle, N */
   driveForce: number
-  drifting: boolean
-  clutchKicking: boolean
   h: number
 }
 
@@ -120,11 +118,11 @@ export class Wheel {
     const vLong = dot(pointVel, wFwd)
     const vLat = dot(pointVel, wLeft)
     const tyreSlip = Math.atan2(vLat, Math.max(Math.abs(vLong), 1.0))
-    const locked = !this.front && ctx.controls.handbrake
 
-    const { fLong, fLat } = locked ? this.lockedForces(vLong, vLat, load, ctx.h) : this.rollingForces(ctx, vLong, vLat, tyreSlip, load)
+    const { fLong, fLat } = this.rollingForces(ctx, vLong, vLat, tyreSlip, load)
+    const tyre = ctx.tyreScale
 
-    const force = add(add(scale(normal, load), scale(wFwd, fLong)), scale(wLeft, fLat))
+    const force = add(add(scale(normal, load), scale(wFwd, fLong * tyre)), scale(wLeft, fLat * tyre))
     ctx.body.applyImpulseAtPoint(scale(force, ctx.h), contact, true)
 
     // --- state for visuals / fx ---
@@ -132,32 +130,24 @@ export class Wheel {
     this.state.contactPoint = contact
     this.state.pos = add(contact, scale(normal, cfg.wheelRadius))
     this.drop = Math.max(0, toi - cfg.wheelRadius)
-    this.state.spin += (vLong / cfg.wheelRadius) * ctx.h * (locked ? 0 : 1)
-    this.state.slide = clamp(Math.abs(Math.sin(tyreSlip)) * 1.6 + (locked ? 0.5 : 0), 0, 1) * clamp(Math.abs(vLong) / 6, 0, 1)
+    this.state.spin += (vLong / cfg.wheelRadius) * ctx.h
+    this.state.slide = clamp(Math.abs(Math.sin(tyreSlip)) * 1.6, 0, 1) * clamp(Math.abs(vLong) / 6, 0, 1)
     this.state.surface = surfaceOf.get(hit.collider.handle) ?? null
-  }
-
-  /** A locked (handbrake) tyre slides: kinetic friction opposes the whole slip velocity. */
-  private lockedForces(vLong: number, vLat: number, load: number, h: number) {
-    const slipSpeed = Math.hypot(vLong, vLat)
-    if (slipSpeed <= 1e-3) return { fLong: 0, fLat: 0 }
-    const fk = Math.min(this.cfg.lockedFriction * this.cfg.mu * load, (slipSpeed * this.shareMass) / h)
-    return { fLong: (-vLong / slipSpeed) * fk, fLat: (-vLat / slipSpeed) * fk }
   }
 
   /** Rolling tyre: drive/brake/rolling resistance, then lateral grip from what's left of the friction circle. */
   private rollingForces(ctx: WheelContext, vLong: number, vLat: number, tyreSlip: number, load: number) {
     const { cfg } = this
     const c = ctx.controls
-    const maxF = cfg.mu * load * (this.front ? 1 : ctx.rearGripScale)
+    // rear tyres hold a little more than the fronts: grip driving understeers, never spins
+    const maxF = cfg.mu * load * (this.front ? 1 : cfg.rearGripBias)
     let fLong = 0
     if (!this.front) {
       if (c.throttle > 0) {
-        // Traction control: drive leaves room for cornering grip unless the driver
-        // is deliberately breaking traction (clutch kick or already drifting).
+        // Traction control: drive always leaves room for cornering grip. Sliding
+        // is the drift axis's job, never a side effect of the throttle.
         const steerUse = Math.min(1, Math.abs(c.steer) * 2)
-        const tcCap = ctx.clutchKicking || ctx.drifting ? Infinity : maxF * (1 - (1 - cfg.tractionLimit) * steerUse)
-        fLong += Math.min(ctx.driveForce / 2, tcCap)
+        fLong += Math.min(ctx.driveForce / 2, maxF * (1 - (1 - cfg.tractionLimit) * steerUse))
       }
       if (c.brake > 0 && ctx.forwardSpeed <= 0.8 && ctx.forwardSpeed > -cfg.maxReverseSpeed) fLong -= (cfg.reverseForce * c.brake) / 2
     }

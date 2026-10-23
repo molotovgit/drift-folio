@@ -30,15 +30,53 @@
   opacity: 0.6;
 }
 .touch__pad.is-active .touch__knob { opacity: 1; border-color: var(--gold) }
-.touch__buttons {
+/* right thumb: drift slider above the pedal buttons */
+.touch__right {
   position: absolute;
   right: calc(16px + env(safe-area-inset-right, 0px));
   bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: auto;
+}
+.touch__slider {
+  position: relative;
+  height: 58px;
+  border-radius: 29px;
+  border: 3px solid var(--accent);
+  background: rgba(26, 20, 32, 0.45);
+  touch-action: none;
+}
+.touch__slider-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  font: italic 800 13px/1 var(--font-display);
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  pointer-events: none;
+}
+.touch__slider-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 251, 246, 0.6);
+  background: rgba(255, 92, 138, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.touch__slider.is-active .touch__slider-knob { background: rgba(255, 92, 138, 0.7); border-color: var(--gold) }
+.touch__buttons {
   display: grid;
   grid-template-columns: auto auto;
   grid-template-rows: auto auto;
   gap: 12px;
-  pointer-events: auto;
 }
 .touch__btn {
   width: 76px;
