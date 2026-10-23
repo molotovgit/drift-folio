@@ -65,6 +65,8 @@ interface Wheel {
   mount: Vec3 // local, relative to CoM
   front: boolean
   prevCompression: number
+  /** hub distance below the mount along the body's down axis, from the last tick */
+  drop: number
   state: WheelState
 }
 
@@ -124,6 +126,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
     mount: v3(x, cfg.mountY, z),
     front,
     prevCompression: 0,
+    drop: cfg.restLength,
     state: { pos: v3(), steerRad: 0, spin: 0, contact: false, contactPoint: v3(), slide: 0, surface: null },
   })
   // forward is +Z; left is +X (see core/math)
@@ -168,10 +171,12 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
     }
   }
 
+  /** Pose from the body's current (post-step) transform; hubs follow the body, not last tick's raycast. */
   function currentPose(): Pose {
     const p = body.translation()
     const r = body.rotation()
-    return { pos: { x: p.x, y: p.y, z: p.z }, rot: { x: r.x, y: r.y, z: r.z, w: r.w }, wheels: wheels.map((w) => ({ ...w.state.pos })) }
+    const hubs = wheels.map((w) => add(p, rotate(r, { x: w.mount.x, y: w.mount.y - w.drop, z: w.mount.z })))
+    return { pos: { x: p.x, y: p.y, z: p.z }, rot: { x: r.x, y: r.y, z: r.z, w: r.w }, wheels: hubs }
   }
 
   function pose(alpha: number): Pose {
@@ -233,6 +238,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
         w.state.slide = 0
         w.state.surface = null
         w.prevCompression = 0
+        w.drop = cfg.restLength
         w.state.pos = add(origin, scale(down, rayLen - cfg.wheelRadius))
         continue
       }
@@ -303,6 +309,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
       w.state.contact = true
       w.state.contactPoint = contact
       w.state.pos = add(contact, scale(n, cfg.wheelRadius))
+      w.drop = Math.max(0, toi - cfg.wheelRadius)
       w.state.spin += (vLong / cfg.wheelRadius) * h * (c.handbrake && !w.front ? 0 : 1)
       w.state.slide = clamp(Math.abs(Math.sin(tyreSlip)) * 1.6 + (locked ? 0.5 : 0), 0, 1) * clamp(Math.abs(vLong) / 6, 0, 1)
       const handle = hit.collider.handle
@@ -342,6 +349,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
     prevPose = null
     for (const w of wheels) {
       w.prevCompression = 0
+      w.drop = cfg.restLength
       w.state.contact = false
     }
   }
