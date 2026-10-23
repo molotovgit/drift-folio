@@ -158,4 +158,27 @@ describe('FD drift handling (headless physics)', () => {
     expect(frontZ).toBeCloseTo(2.425 / 2, 1)
     expect(rearZ).toBeCloseTo(-2.425 / 2, 1)
   })
+
+  it('the driver steers the drift angle: into the slide widens it, counter-steer tightens it', () => {
+    const held = (steer: number) => {
+      const { run } = rig()
+      run(0.5, {})
+      run(4, { throttle: 1 })
+      run(0.6, { throttle: 1, steer: 1, handbrake: true })
+      let sum = 0
+      let n = 0
+      run(2.5, { throttle: 0.9, steer }, (c) => {
+        const t = c.telemetry()
+        if (t.drifting) {
+          sum += Math.abs(t.slipDeg)
+          n++
+        }
+      })
+      return n ? sum / n : 0
+    }
+    // the entry slide is to the right (steer +1), so +steer is "into" it
+    const wide = held(0.8)
+    const tight = held(-0.5)
+    expect(wide).toBeGreaterThan(tight + 5)
+  })
 })

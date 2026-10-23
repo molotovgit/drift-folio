@@ -329,7 +329,11 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
     const dSlip = (slipAbs - prevSlipAbs) / h
     prevSlipAbs = slipAbs
     if (drifting) {
-      const err = clamp(cfg.driftTargetDeg * RAD - slipAbs, -1, 1) // >0 too straight, <0 too sideways
+      // Driver control: steering into the turn widens the held angle, counter-steering
+      // tightens it. A positive slip is a right-hand slide, so +steer (right) is "into" it.
+      const steerInto = clamp(c.steer * Math.sign(slipRad), -1, 1)
+      const targetDeg = cfg.driftTargetDeg + cfg.driftSteerRangeDeg * steerInto
+      const err = clamp(targetDeg * RAD - slipAbs, -1, 1) // >0 too straight, <0 too sideways
       const gain = err > 0 ? cfg.driftHoldGain * c.throttle : cfg.driftHoldGain * (0.6 + 0.4 * c.throttle)
       const torque = -Math.sign(slipRad) * (gain * err - cfg.driftDamping * dSlip)
       body.applyTorqueImpulse(scale(up, torque * h), true)
