@@ -9,7 +9,7 @@ import { mulberry32 } from './dressing'
  * gets a vertical colour ramp (`bottom` at its base, `top` at its tip), which
  * the toon bands turn into a painted, cel-shaded look without textures.
  */
-class PlantBuilder {
+export class PlantBuilder {
   private readonly parts: THREE.BufferGeometry[] = []
   private readonly bottom = new THREE.Color()
   private readonly top = new THREE.Color()
@@ -63,7 +63,7 @@ class PlantBuilder {
  * per-axis scale. A negative `rz` tips +Y towards +X; `ry = -a` then swings that
  * lean to the direction (cos a, sin a), so `pose(.., 0, -a, -lean)` leans outwards.
  */
-function pose(x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1): THREE.Matrix4 {
+export function pose(x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1): THREE.Matrix4 {
   return new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ')), new THREE.Vector3(sx, sy, sz))
 }
 

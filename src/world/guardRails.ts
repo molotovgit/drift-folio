@@ -14,8 +14,8 @@ const RAIL_OFFSET = 4.7
 const POST_SPACING = 4
 const BEAM_LOW = 0.45
 const BEAM_HIGH = 0.78
-/** rails are skipped on these routes (town street has kerbs, not rails) */
-const NO_RAIL_ROUTES = new Set(['town'])
+/** rails are skipped on these routes (the town and ward streets have kerbs and pavements, not rails) */
+const NO_RAIL_ROUTES = new Set(['town', 'city'])
 
 /** A run of consecutive samples on one side of an edge that needs a rail. */
 export interface RailRun {

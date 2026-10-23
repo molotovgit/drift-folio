@@ -8,6 +8,8 @@ import { GroundPaint } from './groundPaint'
 import { GuardRails } from './guardRails'
 import { CullScheduler, InstancedProps, placeMatrix } from './instancedProps'
 import { lampSpots, landmarks, treeKeepOut, treeSpots, type TreeSpot } from './mountainLayout'
+import { RegionLayouts } from './regionLayouts'
+import { RegionProps } from './regionProps'
 import { Roadside } from './roadside'
 import { RoadsideLayout } from './roadsideLayout'
 import { RoadMesh } from './roadMesh'
@@ -16,13 +18,15 @@ import { Signposts } from './signposts'
 import { TerrainHeights } from './terrain'
 import { TerrainCollider } from './terrainCollider'
 import { TerrainMesh } from './terrainMesh'
+import { TEMPLE_LOTS } from './templeLayout'
 import { TOWN_LOTS } from './townLayout'
 import { allChannels, brokenRailChute, PEAK } from './shortcutLayout'
 
 /**
- * The playable mountain (M3): roads, carved terrain, guard rails, lamps,
- * forest and landmarks, plus the checkpoint system. Geometry and colliders are
- * built synchronously; glTF props load in `dress()`.
+ * The playable world (M3): the mountain pass plus Lantern Valley and Neon
+ * Ward — roads, carved terrain, guard rails, lamps, forest, landmarks and the
+ * regions' props, plus the checkpoint system. Geometry and colliders are built
+ * synchronously; glTF props load and region props are built in `dress()`.
  */
 export class MountainWorld {
   readonly roads = new RoadNetwork()
@@ -45,6 +49,10 @@ export class MountainWorld {
   private readonly roadside: RoadsideLayout
   /** the built roadside sets (after `dress`) and the tier they are thinned for */
   private roadsideSets: Roadside | null = null
+  /** where Lantern Valley's and Neon Ward's props stand */
+  readonly regions: RegionLayouts
+  /** their built props (after `dress`) */
+  private regionProps: RegionProps | null = null
   private tier: QualityTier = 'high'
 
   constructor(
@@ -52,14 +60,18 @@ export class MountainWorld {
     world: RAPIER.World,
   ) {
     const peakLot = { name: 'peak' as const, x: PEAK.x, z: PEAK.z, r: PEAK.r, y: PEAK.y }
-    this.terrain = new TerrainHeights(this.roads, [...TOWN_LOTS, peakLot], allChannels(this.roads))
+    this.terrain = new TerrainHeights(this.roads, [...TOWN_LOTS, peakLot, ...TEMPLE_LOTS], allChannels(this.roads))
     this.terrainCollider = new TerrainCollider(world, this.terrain)
+    this.regions = RegionLayouts.of(this.roads, this.terrain)
+    RegionProps.colliders(world, this.regions, this.roads, this.terrain)
     const forestKeepOut = treeKeepOut(this.roads)
+    // the roadside layout adds the regions' keep-outs itself; the forest gets them here
     this.roadside = new RoadsideLayout(this.roads, this.terrain, forestKeepOut)
-    this.trees = [...treeSpots(this.roads, this.terrain, forestKeepOut), ...this.roadside.trees]
+    this.trees = [...treeSpots(this.roads, this.terrain, [...forestKeepOut, ...this.regions.keepOuts]), ...this.roadside.trees]
     const canopies = [
       ...this.trees.map((t) => ({ x: t.x, z: t.z, r: 5 * t.scale })),
       ...this.roadside.items.filter((i) => i.kind === 'bamboo').map((i) => ({ x: i.x, z: i.z, r: 3 * i.scale })),
+      ...this.regions.temple.spots.grove.map((g) => ({ x: g.x, z: g.z, r: 3 * g.scale })),
     ]
     scene.add(new TerrainMesh(this.terrain, new GroundPaint(this.roads, canopies)).mesh)
     scene.add(new RoadMesh(this.roads, world).group)
@@ -86,6 +98,7 @@ export class MountainWorld {
   setTier(tier: QualityTier): void {
     this.tier = tier
     this.roadsideSets?.setTier(tier)
+    this.regionProps?.setTier(tier)
   }
 
   /** Instances drawn this frame across all culled props (for tests/budgets). */
@@ -117,8 +130,13 @@ export class MountainWorld {
       Roadside.build(this.roadside, tier),
       InstancedProps.create('lamp', lamps.map((l) => placeMatrix(l.pos.x, l.pos.y, l.pos.z, l.yaw))),
       ...[...byModel].map(([model, transforms]) => InstancedProps.create(model, transforms)),
-      PropPlacer.place(this.scene, landmarks(this.roads, this.terrain)),
+      PropPlacer.place(this.scene, [...landmarks(this.roads, this.terrain), ...this.regions.temple.landmarks]),
     ])
+    // the regions' props are procedural (no loading): the valley's temple, paddies and lanterns, the ward's blocks and neon
+    const regionProps = RegionProps.build(this.regions, this.roads, this.terrain, tier)
+    this.scene.add(regionProps.group)
+    this.instanced.push(...regionProps.sets)
+    this.regionProps = regionProps
     for (const p of [lampProps, ...forest]) {
       if (!(p instanceof InstancedProps)) {
         this.signposts.label(p)
@@ -134,6 +152,7 @@ export class MountainWorld {
     // the governor may have dropped the tier while the models loaded
     this.roadsideSets = roadside
     roadside.setTier(this.tier)
+    regionProps.setTier(this.tier)
     this.lampAnchors = await this.bulbPositions(lamps)
   }
 
