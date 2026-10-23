@@ -4,6 +4,10 @@ import { clamp, DEG, len2, signedAngle, type Vec2 } from '../core/math'
 export const DRIFT_MIN_SLIP_DEG = 12
 export const DRIFT_MIN_SPEED = 8
 const SLIP_MIN_SPEED = 0.5
+/** |drift| below this counts as "no drift input" (analog stick noise). */
+export const DRIFT_INPUT_DEADBAND = 0.05
+/** |steer| needed for the legacy handbrake to pick a drift direction. */
+const HANDBRAKE_STEER_MIN = 0.15
 
 /** Body slip angle β in degrees: heading → velocity, CCW (left) positive. 0 when nearly stopped. */
 export function slipAngleDeg(heading: Vec2, velocity: Vec2): number {
@@ -26,30 +30,56 @@ export function lateralGrip(slipRad: number, peakRad: number, slideFactor: numbe
   return slideFactor + (1 - slideFactor) * Math.exp(-(s - peakRad) / falloff)
 }
 
-export const HANDBRAKE_REAR_GRIP = 0.35
-export const CLUTCH_KICK_SECONDS = 0.3
-
 /**
- * Multiplier on rear lateral grip. Handbrake locks the rears; a clutch kick
- * (clutchKickT = seconds of kick remaining) dumps grip under throttle.
+ * The drift axis the car acts on (-1..1, +1 = drift right). The drift input
+ * wins; otherwise the legacy handbrake drifts fully toward the steer
+ * direction, or keeps an existing slide going (slip > 0 is a right-hand
+ * slide: nose right of the path). Handbrake alone in a straight line gives 0.
  */
-export function rearGripScale(c: { handbrake: boolean; clutchKickT: number; throttle: number; speed: number }): number {
-  if (c.handbrake) return HANDBRAKE_REAR_GRIP
-  if (c.clutchKickT > 0) return 1 - 0.5 * clamp(c.throttle, 0, 1)
-  // Mild power-oversteer when flooring it at moderate speed.
-  const powerOver = 0.12 * clamp(c.throttle, 0, 1) * clamp(1 - Math.abs(c.speed - 18) / 18, 0, 1)
-  return 1 - powerOver
+export function driftCommand(c: { drift: number; steer: number; handbrake: boolean }, slipDeg: number): number {
+  if (Math.abs(c.drift) > DRIFT_INPUT_DEADBAND) return clamp(c.drift, -1, 1)
+  if (!c.handbrake) return 0
+  if (Math.abs(c.steer) >= HANDBRAKE_STEER_MIN) return Math.sign(c.steer)
+  if (Math.abs(slipDeg) >= DRIFT_MIN_SLIP_DEG) return Math.sign(slipDeg)
+  return 0
 }
 
 /**
- * Adds counter-steer toward the slide (steer +1 = right). The assist aims the
- * front wheels along the direction of travel (lock ≈ slip angle), fading in
- * over 8° above the drift threshold. `strength` 1 = full alignment.
+ * Pedal shaping of the commanded drift angle (a forgiving "lift-off" car):
+ * the throttle holds the base angle, lifting off steepens it. The brake does
+ * not change the goal; the controller uses it to lock the current angle.
  */
-export function counterSteerAssist(slipDeg: number, steerInput: number, strength: number, lockDeg = 38): number {
-  const a = Math.abs(slipDeg)
-  if (a < DRIFT_MIN_SLIP_DEG) return steerInput
-  const fadeIn = Math.min(1, (a - DRIFT_MIN_SLIP_DEG) / 8)
-  const assist = -Math.sign(slipDeg) * strength * Math.min(1, a / lockDeg) * fadeIn
-  return clamp(steerInput + assist, -1, 1)
+export interface SlipShaping {
+  /** body slip at full drift input on full throttle, degrees */
+  maxSlipDeg: number
+  /** angle multiplier with the throttle fully lifted (> 1 = lift steepens) */
+  liftSlipGain: number
+}
+
+/** Target body slip, degrees (+ = drift right), for a drift axis value and throttle. */
+export function targetSlipDeg(drift: number, throttle: number, s: SlipShaping): number {
+  const pedal = s.liftSlipGain + (1 - s.liftSlipGain) * clamp(throttle, 0, 1)
+  return clamp(drift, -1, 1) * s.maxSlipDeg * pedal
+}
+
+/** Path shaping: how hard the drift and steer axes bend the line. */
+export interface PathShaping {
+  /** lateral acceleration from full drift alone, in g */
+  driftLatG: number
+  /** lateral acceleration from full steer, in g */
+  steerLatG: number
+  /** extra line tightening at full brake (×(1 + this)) */
+  brakeTighten: number
+  maxLatG: number
+}
+
+/**
+ * Commanded lateral acceleration of the path, m/s², + = curving right.
+ * Drift right curves right; steer adds or subtracts (counter-steer straightens
+ * the line); the brake tightens it.
+ */
+export function pathLateralAccel(drift: number, steer: number, brake: number, s: PathShaping): number {
+  const g = 9.81
+  const raw = (s.driftLatG * clamp(drift, -1, 1) + s.steerLatG * clamp(steer, -1, 1)) * (1 + s.brakeTighten * clamp(brake, 0, 1))
+  return clamp(raw, -s.maxLatG, s.maxLatG) * g
 }

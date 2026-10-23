@@ -3,7 +3,9 @@ import type { ControlState } from '../core/input'
 import { clamp, damp, RAD, toGround, type Vec2, type Vec3 } from '../core/math'
 import { dot, lerp3, nlerpQuat, rotate, scale, v3, yawQuat, type Quat } from '../core/vec3'
 import { carConfig, type CarConfig } from './carConfig'
-import { CLUTCH_KICK_SECONDS, counterSteerAssist, isDrifting, rearGripScale, slipAngleDeg } from './driftMath'
+import { DriftController } from './driftController'
+import { driftCommand, isDrifting, slipAngleDeg } from './driftMath'
+import { WallGraze } from './wallGraze'
 import { Wheel, type WheelState } from './wheel'
 
 // re-exported so world builders and tests can keep importing from the car module
@@ -38,6 +40,8 @@ export interface Pose {
 const UP = v3(0, 1, 0)
 const FORWARD = v3(0, 0, 1)
 const LEFT = v3(1, 0, 0)
+/** front-wheel angle the steer input adds on top of the counter-steer while drifting, degrees */
+const DRIFT_STEER_SHOW_DEG = 12
 
 /**
  * The "FD": a Rapier rigid body on four raycast wheels with an arcade drift
@@ -48,11 +52,10 @@ const LEFT = v3(1, 0, 0)
 export class DriftCar {
   readonly body: RAPIER.RigidBody
   private readonly wheelList: Wheel[]
+  private readonly drift: DriftController
+  private readonly graze = new WallGraze()
   private steerAngle = 0
-  private clutchKickT = 0
-  private prevClutch = false
   private lastThrottle = 0
-  private prevSlipAbs = 0
   private prevPose: Pose | null = null
 
   constructor(
@@ -95,6 +98,7 @@ export class DriftCar {
       new Wheel(v3(hx, cfg.mountY, -hz), false, cfg),
       new Wheel(v3(-hx, cfg.mountY, -hz), false, cfg),
     ]
+    this.drift = new DriftController(cfg)
   }
 
   /** Read-only wheel states (index order: FL, FR, RL, RR). */
@@ -144,13 +148,17 @@ export class DriftCar {
   update(c: ControlState, h: number): void {
     this.prevPose = this.currentPose()
     this.lastThrottle = c.throttle
+    this.graze.tick(h)
     const t0 = this.telemetry()
     const rot = this.body.rotation()
     const lv = this.body.linvel()
     const fwd = rotate(rot, FORWARD)
     const forwardSpeed = dot(lv, fwd)
+    const drift = driftCommand(c, t0.slipDeg)
+    // the legacy handbrake with no direction to drift in just slows the car
+    const pedals = c.handbrake && drift === 0 ? { ...c, brake: Math.max(c.brake, this.cfg.handbrakeBrake) } : c
+    const driveForce = c.throttle > 0 ? Math.min(this.cfg.maxDriveForce, this.cfg.powerW / Math.max(Math.abs(forwardSpeed), 4)) * c.throttle : 0
 
-    this.updateClutchKick(c, h)
     this.updateSteering(c, t0, h)
 
     const ctx = {
@@ -164,17 +172,42 @@ export class DriftCar {
       fwd,
       left: rotate(rot, LEFT),
       forwardSpeed,
-      controls: c,
-      rearGripScale: rearGripScale({ handbrake: c.handbrake, clutchKickT: this.clutchKickT, throttle: c.throttle, speed: t0.speed }),
-      driveForce: c.throttle > 0 ? Math.min(this.cfg.maxDriveForce, this.cfg.powerW / Math.max(Math.abs(forwardSpeed), 4)) * c.throttle : 0,
-      drifting: t0.drifting,
-      clutchKicking: this.clutchKickT > 0,
+      controls: pedals,
+      // the drift controller takes the horizontal tyre forces over as it blends in
+      tyreScale: 1 - this.drift.mix,
+      driveForce,
       h,
     }
     for (const w of this.wheelList) w.simulate(ctx, w.front ? this.steerAngle : 0)
 
     this.applyAeroDrag(lv, h)
-    this.applyDriftAssist(c, t0, ctx.up, h)
+    this.drift.step(
+      this.body,
+      { drift, steer: c.steer, throttle: c.throttle, brake: pedals.brake },
+      {
+        up: ctx.up,
+        fwd,
+        linvel: lv,
+        angvel: ctx.angvel,
+        slipRad: t0.slipDeg * RAD,
+        contactShare: this.wheelList.filter((w) => w.state.contact).length / this.wheelList.length,
+        driveForce,
+      },
+      h,
+    )
+  }
+
+  /**
+   * A guard-rail contact (Rapier contact-force direction, either sign): scrub
+   * some speed and carry on along the wall. Call after `world.step()`.
+   */
+  grazeWall(forceDir: Vec3): boolean {
+    return this.graze.apply(this.body, forceDir)
+  }
+
+  /** 0 = plain tyre grip, 1 = the twin-axis drift controller owns the tyre forces. */
+  get driftMix(): number {
+    return this.drift.mix
   }
 
   /** Teleport to a ground position facing `yaw`, clearing all motion and controller state. */
@@ -184,11 +217,10 @@ export class DriftCar {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true)
     this.steerAngle = 0
-    this.clutchKickT = 0
-    this.prevClutch = false
     this.lastThrottle = 0
-    this.prevSlipAbs = 0
     this.prevPose = null
+    this.drift.reset()
+    this.graze.reset()
     for (const w of this.wheelList) w.reset()
   }
 
@@ -201,53 +233,26 @@ export class DriftCar {
     return { pos, rot, wheels: this.wheelList.map((w) => w.hubAt(pos, rot)) }
   }
 
-  /** Clutch kick: pressing the clutch under throttle dumps rear grip for a moment. */
-  private updateClutchKick(c: ControlState, h: number): void {
-    if (c.clutch && !this.prevClutch && c.throttle > 0.5) this.clutchKickT = CLUTCH_KICK_SECONDS
-    this.prevClutch = c.clutch
-    this.clutchKickT = Math.max(0, this.clutchKickT - h)
-  }
-
   /**
    * While gripping, lock is limited to what the tyres can hold at this speed (full
-   * input ≈ the grip limit, like an arcade racer). Drifting unlocks full lock, and
-   * the counter-steer assist aims the front wheels along the slide.
+   * input ≈ the grip limit, like an arcade racer). As the drift controller blends
+   * in, the front wheels point along the path (natural counter-steer, visual: the
+   * tyres no longer carry the cornering force) plus a little of the steer input.
    */
   private updateSteering(c: ControlState, t0: Telemetry, h: number): void {
     const { cfg } = this
     const gripLockDeg = Math.atan((cfg.wheelbase * cfg.mu * 9.81 * cfg.steerGripMargin) / Math.max(t0.speed * t0.speed, 1)) / RAD
-    const lockDeg = t0.drifting ? cfg.maxSteerDeg : clamp(gripLockDeg, cfg.highSpeedSteerDeg * 0.25, cfg.maxSteerDeg)
-    const steerCmd = counterSteerAssist(t0.slipDeg, c.steer, cfg.counterSteer, cfg.maxSteerDeg)
-    // steer +1 (right) is a negative wheel yaw
-    this.steerAngle = damp(this.steerAngle, -steerCmd * lockDeg * RAD, cfg.steerSpeed, h)
+    const lockDeg = clamp(gripLockDeg, cfg.highSpeedSteerDeg * 0.25, cfg.maxSteerDeg)
+    // steer +1 (right) is a negative wheel yaw; a right-hand slide (slip > 0) has the path to the left (+)
+    const gripAngle = -c.steer * lockDeg * RAD
+    const driftAngle = clamp(t0.slipDeg - c.steer * DRIFT_STEER_SHOW_DEG, -cfg.maxSteerDeg, cfg.maxSteerDeg) * RAD
+    const mix = this.drift.mix
+    this.steerAngle = damp(this.steerAngle, gripAngle * (1 - mix) + driftAngle * mix, cfg.steerSpeed, h)
   }
 
   /** Quadratic drag from the velocity at the start of the tick (before wheel impulses). */
   private applyAeroDrag(lv: Vec3, h: number): void {
     const speed = Math.hypot(lv.x, lv.y, lv.z)
     this.body.applyImpulse(scale(lv, -this.cfg.dragCoeff * speed * h), true)
-  }
-
-  /**
-   * Drift assist (arcade): a PD controller on |slip|. Under throttle it holds the
-   * slide near a target angle; past the target it always pulls the nose back so a
-   * novice does not spin. The driver moves the target: steering into the slide
-   * widens it, counter-steering tightens it.
-   */
-  private applyDriftAssist(c: ControlState, t0: Telemetry, up: Vec3, h: number): void {
-    const { cfg } = this
-    const slipRad = t0.slipDeg * RAD
-    const slipAbs = Math.abs(slipRad)
-    const dSlip = (slipAbs - this.prevSlipAbs) / h
-    this.prevSlipAbs = slipAbs
-    if (!t0.drifting) return
-    // a positive slip is a right-hand slide, so +steer (right) is "into" it
-    const steerInto = clamp(c.steer * Math.sign(slipRad), -1, 1)
-    const targetDeg = cfg.driftTargetDeg + cfg.driftSteerRangeDeg * steerInto
-    const err = clamp(targetDeg * RAD - slipAbs, -1, 1) // >0 too straight, <0 too sideways
-    const gain = err > 0 ? cfg.driftHoldGain * c.throttle : cfg.driftHoldGain * (0.6 + 0.4 * c.throttle)
-    // positive yaw torque turns the nose left; push the nose away from (or back toward) the velocity
-    const torque = -Math.sign(slipRad) * (gain * err - cfg.driftDamping * dSlip)
-    this.body.applyTorqueImpulse(scale(up, torque * h), true)
   }
 }

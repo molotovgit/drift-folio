@@ -1,13 +1,19 @@
-import { clamp } from './math'
+import { GamepadSource } from './gamepad'
 
-/** One frame of driver intent. Analog values are 0..1 (steer -1..1). */
+/**
+ * One frame of driver intent. Analog values are 0..1 (steer and drift -1..1).
+ * Twin-axis driving: `steer` bends the car's path, `drift` swings the body
+ * out to a slip angle relative to that path.
+ */
 export interface ControlState {
   throttle: number
   brake: number
-  /** -1 = full left, +1 = full right */
+  /** path steering: -1 = full left, +1 = full right */
   steer: number
+  /** drift angle: -1 = full drift left, +1 = full drift right (0 = grip driving) */
+  drift: number
+  /** legacy handbrake: drifts in the steer direction (Space, touch DRIFT, pad A) */
   handbrake: boolean
-  clutch: boolean
   /** one-shot buttons: true only on the frame they were pressed */
   reset: boolean
   camera: boolean
@@ -15,29 +21,27 @@ export interface ControlState {
   horn: boolean
   /** one-shot */
   mute: boolean
+  /** one-shot: toggle the pause / skip overlay (gamepad Start) */
+  pause: boolean
 }
 
 export const idleControls = (): ControlState => ({
-  throttle: 0, brake: 0, steer: 0, handbrake: false, clutch: false, reset: false, camera: false, horn: false, mute: false,
+  throttle: 0, brake: 0, steer: 0, drift: 0, handbrake: false, reset: false, camera: false, horn: false, mute: false, pause: false,
 })
 
-/** Extra analog sources (on-screen touch controls) merge into the keyboard state. */
+/** Extra analog sources (gamepad, on-screen touch controls) merge into the keyboard state. */
 export interface AnalogSource {
   read(): Partial<ControlState> | null
 }
-
-/** Keyboard steering ramps in/out instead of snapping to full lock. */
-const STEER_RAMP_SECONDS = 0.12
-const STEER_RETURN_SECONDS = 0.08
-const GAMEPAD_DEADZONE = 0.12
 
 const KEYS = {
   throttle: ['KeyW', 'ArrowUp'],
   brake: ['KeyS', 'ArrowDown'],
   left: ['KeyA', 'ArrowLeft'],
   right: ['KeyD', 'ArrowRight'],
+  driftLeft: ['KeyJ'],
+  driftRight: ['KeyL'],
   handbrake: ['Space'],
-  clutch: ['ShiftLeft', 'ShiftRight'],
   reset: ['KeyR'],
   camera: ['KeyC'],
   horn: ['KeyH'],
@@ -46,41 +50,63 @@ const KEYS = {
 
 const GAME_KEYS = new Set<string>(Object.values(KEYS).flat())
 
-/** Merges keyboard, standard-mapping gamepad and touch sources into a ControlState. */
+/**
+ * A digital key pair as an analog axis: ramps in over `rampSeconds` and back
+ * (or through zero) over `returnSeconds`, so a tap gives a partial input.
+ */
+class KeyAxis {
+  value = 0
+
+  constructor(
+    private readonly rampSeconds: number,
+    private readonly returnSeconds: number,
+  ) {}
+
+  update(want: number, dt: number): number {
+    const returning = want === 0 || (this.value !== 0 && Math.sign(want) !== Math.sign(this.value))
+    const step = (returning ? 1 / this.returnSeconds : 1 / this.rampSeconds) * dt
+    this.value = Math.abs(want - this.value) <= step ? want : this.value + Math.sign(want - this.value) * step
+    return this.value
+  }
+}
+
+/** Merges keyboard, gamepad and touch sources into a ControlState. */
 export class InputController {
   private readonly down = new Set<string>()
   private readonly pressed = new Set<string>()
   private readonly sources: AnalogSource[] = []
-  private steer = 0
-  private prevPadButtons: boolean[] = []
+  /** keyboard steering ramps in/out instead of snapping to full lock */
+  private readonly steerAxis = new KeyAxis(0.12, 0.08)
+  /** keyboard drift ramps a little slower, so a tap of J/L asks for a shallow angle */
+  private readonly driftAxis = new KeyAxis(0.18, 0.1)
 
   constructor(
     private readonly target: EventTarget,
-    private readonly getGamepads: () => (Gamepad | null)[] = () => navigator.getGamepads?.() ?? [],
+    getGamepads?: () => (Gamepad | null)[],
   ) {
     target.addEventListener('keydown', this.onKeyDown)
     target.addEventListener('keyup', this.onKeyUp)
     target.addEventListener('blur', this.onBlur)
+    this.sources.push(new GamepadSource(getGamepads))
   }
 
   addSource(source: AnalogSource): void {
     this.sources.push(source)
   }
 
-  /** Read this frame's controls; `dt` drives the keyboard steering ramp. */
+  /** Read this frame's controls; `dt` drives the keyboard steer/drift ramps. */
   read(dt: number): ControlState {
     const s = idleControls()
     s.throttle = this.any(KEYS.throttle) ? 1 : 0
     s.brake = this.any(KEYS.brake) ? 1 : 0
     s.handbrake = this.any(KEYS.handbrake)
-    s.clutch = this.any(KEYS.clutch)
     s.reset = this.once(KEYS.reset)
     s.camera = this.once(KEYS.camera)
     s.horn = this.any(KEYS.horn)
     s.mute = this.once(KEYS.mute)
     this.pressed.clear()
-    s.steer = this.rampSteer(dt)
-    this.readGamepad(s)
+    s.steer = this.steerAxis.update(this.pair(KEYS.left, KEYS.right), dt)
+    s.drift = this.driftAxis.update(this.pair(KEYS.driftLeft, KEYS.driftRight), dt)
     this.readSources(s)
     return s
   }
@@ -91,44 +117,26 @@ export class InputController {
     this.target.removeEventListener('blur', this.onBlur)
   }
 
-  private rampSteer(dt: number): number {
-    const want = (this.any(KEYS.right) ? 1 : 0) - (this.any(KEYS.left) ? 1 : 0)
-    // returning to centre (or reversing direction) is quicker than turning in
-    const returning = want === 0 || (this.steer !== 0 && Math.sign(want) !== Math.sign(this.steer))
-    const step = (returning ? 1 / STEER_RETURN_SECONDS : 1 / STEER_RAMP_SECONDS) * dt
-    this.steer = Math.abs(want - this.steer) <= step ? want : this.steer + Math.sign(want - this.steer) * step
-    return this.steer
+  /** -1 / 0 / +1 from a negative and a positive key set (both held cancel out). */
+  private pair(neg: readonly string[], pos: readonly string[]): number {
+    return (this.any(pos) ? 1 : 0) - (this.any(neg) ? 1 : 0)
   }
 
-  private readGamepad(s: ControlState): void {
-    const pad = this.getGamepads().find((p): p is Gamepad => !!p && p.mapping === 'standard')
-    if (!pad) return
-    const btn = (i: number) => pad.buttons[i]?.value ?? 0
-    const ax = pad.axes[0] ?? 0
-    // rescale past the deadzone so steering starts from 0, not from 0.12
-    if (Math.abs(ax) > GAMEPAD_DEADZONE) s.steer = clamp((Math.sign(ax) * (Math.abs(ax) - GAMEPAD_DEADZONE)) / (1 - GAMEPAD_DEADZONE), -1, 1)
-    s.throttle = Math.max(s.throttle, btn(7))
-    s.brake = Math.max(s.brake, btn(6))
-    s.handbrake ||= btn(0) > 0.5
-    s.clutch ||= btn(5) > 0.5
-    const now = pad.buttons.map((b) => b.pressed)
-    const edge = (i: number) => !!now[i] && !this.prevPadButtons[i]
-    s.reset ||= edge(3)
-    s.camera ||= edge(2)
-    s.horn ||= btn(1) > 0.5
-    this.prevPadButtons = now
-  }
-
+  /** Axes: the strongest source wins; pedals: the max; buttons: any source. */
   private readSources(s: ControlState): void {
     for (const src of this.sources) {
       const v = src.read()
       if (!v) continue
       if (v.steer !== undefined && Math.abs(v.steer) > Math.abs(s.steer)) s.steer = v.steer
+      if (v.drift !== undefined && Math.abs(v.drift) > Math.abs(s.drift)) s.drift = v.drift
       if (v.throttle !== undefined) s.throttle = Math.max(s.throttle, v.throttle)
       if (v.brake !== undefined) s.brake = Math.max(s.brake, v.brake)
       s.handbrake ||= !!v.handbrake
       s.reset ||= !!v.reset
       s.camera ||= !!v.camera
+      s.horn ||= !!v.horn
+      s.mute ||= !!v.mute
+      s.pause ||= !!v.pause
     }
   }
 

@@ -61,13 +61,16 @@ describe('FD drift handling (headless physics)', () => {
     expect(drifted).toBe(true)
   })
 
-  it('a drift can be held on throttle with counter-steer for at least 2 s', () => {
+  // Twin-axis model: a drift lasts as long as the drift input (here the legacy
+  // handbrake + steer) is held. The old version tapped the handbrake and let the
+  // automatic drift assist hold the slide on its own, which the owner disliked.
+  it('a handbrake drift is held on throttle for as long as the handbrake is held', () => {
     const { car, run } = rig()
     run(0.5, {})
     run(4, { throttle: 1 })
     run(0.6, { throttle: 1, steer: 1, handbrake: true })
     let held = 0
-    run(3, { throttle: 0.85, steer: 0 }, (c) => {
+    run(3, { throttle: 0.85, steer: 0.3, handbrake: true }, (c) => {
       if (c.telemetry().drifting) held += PHYSICS_STEP
     })
     expect(held).toBeGreaterThan(2)
@@ -99,7 +102,7 @@ describe('FD drift handling (headless physics)', () => {
     let seed = 7
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
     for (let i = 0; i < 40; i++) {
-      run(0.25, { throttle: rnd(), brake: rnd() < 0.2 ? 1 : 0, steer: rnd() * 2 - 1, handbrake: rnd() < 0.3, clutch: rnd() < 0.2 })
+      run(0.25, { throttle: rnd(), brake: rnd() < 0.2 ? 1 : 0, steer: rnd() * 2 - 1, handbrake: rnd() < 0.3, drift: rnd() < 0.4 ? rnd() * 2 - 1 : 0 })
     }
     const t = car.telemetry()
     for (const v of [t.pos.x, t.pos.y, t.pos.z, t.speed, t.slipDeg]) expect(Number.isFinite(v)).toBe(true)
@@ -114,14 +117,16 @@ describe('FD drift handling (headless physics)', () => {
     expect(maxSlip).toBeLessThan(12)
   })
 
-  it('a clutch kick under throttle and steer breaks traction into a drift', () => {
-    const { run } = rig()
+  // (the clutch kick is gone: it broke traction outside the drift axis's control)
+  it('handbrake in a straight line slows the car without sliding', () => {
+    const { car, run } = rig()
     run(0.5, {})
-    run(3, { throttle: 1 })
-    let drifted = false
-    run(0.1, { throttle: 1, steer: 1, clutch: true })
-    run(1.5, { throttle: 1, steer: 1 }, (c) => (drifted ||= c.telemetry().drifting))
-    expect(drifted).toBe(true)
+    run(4, { throttle: 1 })
+    const v0 = car.telemetry().speed
+    let maxSlip = 0
+    run(1, { handbrake: true }, (c) => (maxSlip = Math.max(maxSlip, Math.abs(c.telemetry().slipDeg))))
+    expect(car.telemetry().speed).toBeLessThan(v0 - 3)
+    expect(maxSlip).toBeLessThan(5)
   })
 
   it('pose(alpha) blends between the last two ticks', () => {
@@ -158,27 +163,6 @@ describe('FD drift handling (headless physics)', () => {
     expect(frontZ).toBeCloseTo(2.425 / 2, 1)
     expect(rearZ).toBeCloseTo(-2.425 / 2, 1)
   })
-
-  it('the driver steers the drift angle: into the slide widens it, counter-steer tightens it', () => {
-    const held = (steer: number) => {
-      const { run } = rig()
-      run(0.5, {})
-      run(4, { throttle: 1 })
-      run(0.6, { throttle: 1, steer: 1, handbrake: true })
-      let sum = 0
-      let n = 0
-      run(2.5, { throttle: 0.9, steer }, (c) => {
-        const t = c.telemetry()
-        if (t.drifting) {
-          sum += Math.abs(t.slipDeg)
-          n++
-        }
-      })
-      return n ? sum / n : 0
-    }
-    // the entry slide is to the right (steer +1), so +steer is "into" it
-    const wide = held(0.8)
-    const tight = held(-0.5)
-    expect(wide).toBeGreaterThan(tight + 5)
-  })
+  // The old "steer moves the assist's held drift angle" test is superseded by the
+  // twin-axis tests in driftAxis.sim.test.ts: the drift axis sets the angle, steer the line.
 })

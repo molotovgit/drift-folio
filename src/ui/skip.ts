@@ -54,6 +54,15 @@ export class SkipOverlay {
     document.dispatchEvent(new CustomEvent('skip:open', { detail: reason }))
   }
 
+  /**
+   * Pause button (gamepad Start): open as the user, or close again — but only
+   * when the overlay is closable (not when the game could not run).
+   */
+  toggleByUser(): void {
+    if (!this.isOpen) this.open('user')
+    else if (!this.root!.querySelector<HTMLButtonElement>('.skip__close')!.hidden) this.close()
+  }
+
   close(): void {
     if (!this.root) return
     this.root.hidden = true
