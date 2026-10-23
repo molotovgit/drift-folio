@@ -1,5 +1,6 @@
 import { clamp } from './math'
 
+/** One frame of driver intent. Analog values are 0..1 (steer -1..1). */
 export interface ControlState {
   throttle: number
   brake: number
@@ -7,7 +8,7 @@ export interface ControlState {
   steer: number
   handbrake: boolean
   clutch: boolean
-  /** one-shot buttons: true on the frame they were pressed */
+  /** one-shot buttons: true only on the frame they were pressed */
   reset: boolean
   camera: boolean
   horn: boolean
@@ -18,13 +19,15 @@ export const idleControls = (): ControlState => ({
   throttle: 0, brake: 0, steer: 0, handbrake: false, clutch: false, reset: false, camera: false, horn: false, mute: false,
 })
 
-/** Extra analog sources (touch controls) merge into the keyboard state. */
+/** Extra analog sources (on-screen touch controls) merge into the keyboard state. */
 export interface AnalogSource {
   read(): Partial<ControlState> | null
 }
 
+/** Keyboard steering ramps in/out instead of snapping to full lock. */
 const STEER_RAMP_SECONDS = 0.12
 const STEER_RETURN_SECONDS = 0.08
+const GAMEPAD_DEADZONE = 0.12
 
 const KEYS = {
   throttle: ['KeyW', 'ArrowUp'],
@@ -41,94 +44,110 @@ const KEYS = {
 
 const GAME_KEYS = new Set<string>(Object.values(KEYS).flat())
 
-export interface Input {
-  read(dt: number): ControlState
-  addSource(s: AnalogSource): void
-  dispose(): void
-}
+/** Merges keyboard, standard-mapping gamepad and touch sources into a ControlState. */
+export class InputController {
+  private readonly down = new Set<string>()
+  private readonly pressed = new Set<string>()
+  private readonly sources: AnalogSource[] = []
+  private steer = 0
+  private prevPadButtons: boolean[] = []
 
-export function createInput(target: EventTarget, getGamepads: () => (Gamepad | null)[] = () => (navigator.getGamepads?.() ?? [])): Input {
-  const down = new Set<string>()
-  const pressed = new Set<string>()
-  const sources: AnalogSource[] = []
-  let steer = 0
-  let prevPadButtons: boolean[] = []
+  constructor(
+    private readonly target: EventTarget,
+    private readonly getGamepads: () => (Gamepad | null)[] = () => navigator.getGamepads?.() ?? [],
+  ) {
+    target.addEventListener('keydown', this.onKeyDown)
+    target.addEventListener('keyup', this.onKeyUp)
+    target.addEventListener('blur', this.onBlur)
+  }
 
-  const onDown = (e: Event) => {
-    const k = (e as KeyboardEvent).code
-    const t = (e as KeyboardEvent).target as HTMLElement | null
+  addSource(source: AnalogSource): void {
+    this.sources.push(source)
+  }
+
+  /** Read this frame's controls; `dt` drives the keyboard steering ramp. */
+  read(dt: number): ControlState {
+    const s = idleControls()
+    s.throttle = this.any(KEYS.throttle) ? 1 : 0
+    s.brake = this.any(KEYS.brake) ? 1 : 0
+    s.handbrake = this.any(KEYS.handbrake)
+    s.clutch = this.any(KEYS.clutch)
+    s.reset = this.once(KEYS.reset)
+    s.camera = this.once(KEYS.camera)
+    s.horn = this.any(KEYS.horn)
+    s.mute = this.once(KEYS.mute)
+    this.pressed.clear()
+    s.steer = this.rampSteer(dt)
+    this.readGamepad(s)
+    this.readSources(s)
+    return s
+  }
+
+  dispose(): void {
+    this.target.removeEventListener('keydown', this.onKeyDown)
+    this.target.removeEventListener('keyup', this.onKeyUp)
+    this.target.removeEventListener('blur', this.onBlur)
+  }
+
+  private rampSteer(dt: number): number {
+    const want = (this.any(KEYS.right) ? 1 : 0) - (this.any(KEYS.left) ? 1 : 0)
+    // returning to centre (or reversing direction) is quicker than turning in
+    const returning = want === 0 || (this.steer !== 0 && Math.sign(want) !== Math.sign(this.steer))
+    const step = (returning ? 1 / STEER_RETURN_SECONDS : 1 / STEER_RAMP_SECONDS) * dt
+    this.steer = Math.abs(want - this.steer) <= step ? want : this.steer + Math.sign(want - this.steer) * step
+    return this.steer
+  }
+
+  private readGamepad(s: ControlState): void {
+    const pad = this.getGamepads().find((p): p is Gamepad => !!p && p.mapping === 'standard')
+    if (!pad) return
+    const btn = (i: number) => pad.buttons[i]?.value ?? 0
+    const ax = pad.axes[0] ?? 0
+    // rescale past the deadzone so steering starts from 0, not from 0.12
+    if (Math.abs(ax) > GAMEPAD_DEADZONE) s.steer = clamp((Math.sign(ax) * (Math.abs(ax) - GAMEPAD_DEADZONE)) / (1 - GAMEPAD_DEADZONE), -1, 1)
+    s.throttle = Math.max(s.throttle, btn(7))
+    s.brake = Math.max(s.brake, btn(6))
+    s.handbrake ||= btn(0) > 0.5
+    s.clutch ||= btn(5) > 0.5
+    const now = pad.buttons.map((b) => b.pressed)
+    const edge = (i: number) => !!now[i] && !this.prevPadButtons[i]
+    s.reset ||= edge(3)
+    s.camera ||= edge(2)
+    s.horn ||= btn(1) > 0.5
+    this.prevPadButtons = now
+  }
+
+  private readSources(s: ControlState): void {
+    for (const src of this.sources) {
+      const v = src.read()
+      if (!v) continue
+      if (v.steer !== undefined && Math.abs(v.steer) > Math.abs(s.steer)) s.steer = v.steer
+      if (v.throttle !== undefined) s.throttle = Math.max(s.throttle, v.throttle)
+      if (v.brake !== undefined) s.brake = Math.max(s.brake, v.brake)
+      s.handbrake ||= !!v.handbrake
+      s.reset ||= !!v.reset
+      s.camera ||= !!v.camera
+    }
+  }
+
+  private any(codes: readonly string[]): boolean {
+    return codes.some((c) => this.down.has(c))
+  }
+
+  private once(codes: readonly string[]): boolean {
+    return codes.some((c) => this.pressed.has(c))
+  }
+
+  private readonly onKeyDown = (e: Event) => {
+    const ev = e as KeyboardEvent
+    const t = ev.target as HTMLElement | null
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-    if (!GAME_KEYS.has(k)) return
-    if (k === 'Space' || k.startsWith('Arrow')) e.preventDefault()
-    if (!down.has(k)) pressed.add(k)
-    down.add(k)
+    if (!GAME_KEYS.has(ev.code)) return
+    if (ev.code === 'Space' || ev.code.startsWith('Arrow')) e.preventDefault()
+    if (!this.down.has(ev.code)) this.pressed.add(ev.code)
+    this.down.add(ev.code)
   }
-  const onUp = (e: Event) => void down.delete((e as KeyboardEvent).code)
-  const onBlur = () => down.clear()
 
-  target.addEventListener('keydown', onDown)
-  target.addEventListener('keyup', onUp)
-  target.addEventListener('blur', onBlur)
-
-  const any = (codes: readonly string[]) => codes.some((c) => down.has(c))
-  const once = (codes: readonly string[]) => codes.some((c) => pressed.has(c))
-
-  return {
-    read(dt) {
-      const s = idleControls()
-      s.throttle = any(KEYS.throttle) ? 1 : 0
-      s.brake = any(KEYS.brake) ? 1 : 0
-      s.handbrake = any(KEYS.handbrake)
-      s.clutch = any(KEYS.clutch)
-      s.reset = once(KEYS.reset)
-      s.camera = once(KEYS.camera)
-      s.horn = any(KEYS.horn)
-      s.mute = once(KEYS.mute)
-      pressed.clear()
-
-      const want = (any(KEYS.right) ? 1 : 0) - (any(KEYS.left) ? 1 : 0)
-      const returning = want === 0 || (steer !== 0 && Math.sign(want) !== Math.sign(steer))
-      const rate = returning ? 1 / STEER_RETURN_SECONDS : 1 / STEER_RAMP_SECONDS
-      const step = rate * dt
-      steer = Math.abs(want - steer) <= step ? want : steer + Math.sign(want - steer) * step
-      s.steer = steer
-
-      // Standard-mapping gamepad overrides when it is being used.
-      const pad = getGamepads().find((p): p is Gamepad => !!p && p.mapping === 'standard')
-      if (pad) {
-        const btn = (i: number) => pad.buttons[i]?.value ?? 0
-        const ax = pad.axes[0] ?? 0
-        const dz = 0.12
-        if (Math.abs(ax) > dz) s.steer = clamp((Math.sign(ax) * (Math.abs(ax) - dz)) / (1 - dz), -1, 1)
-        s.throttle = Math.max(s.throttle, btn(7))
-        s.brake = Math.max(s.brake, btn(6))
-        s.handbrake ||= btn(0) > 0.5
-        s.clutch ||= btn(5) > 0.5
-        const now = pad.buttons.map((b) => b.pressed)
-        const edge = (i: number) => !!now[i] && !prevPadButtons[i]
-        s.reset ||= edge(3)
-        s.camera ||= edge(2)
-        s.horn ||= btn(1) > 0.5
-        prevPadButtons = now
-      }
-
-      for (const src of sources) {
-        const v = src.read()
-        if (!v) continue
-        if (v.steer !== undefined && Math.abs(v.steer) > Math.abs(s.steer)) s.steer = v.steer
-        if (v.throttle !== undefined) s.throttle = Math.max(s.throttle, v.throttle)
-        if (v.brake !== undefined) s.brake = Math.max(s.brake, v.brake)
-        s.handbrake ||= !!v.handbrake
-        s.reset ||= !!v.reset
-        s.camera ||= !!v.camera
-      }
-      return s
-    },
-    addSource: (s) => void sources.push(s),
-    dispose() {
-      target.removeEventListener('keydown', onDown)
-      target.removeEventListener('keyup', onUp)
-      target.removeEventListener('blur', onBlur)
-    },
-  }
+  private readonly onKeyUp = (e: Event) => void this.down.delete((e as KeyboardEvent).code)
+  private readonly onBlur = () => this.down.clear()
 }

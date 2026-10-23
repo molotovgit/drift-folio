@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('three/webgpu', () => ({}))
+vi.mock('three/webgpu', () => import('three'))
 vi.mock('../../src/render/loadModel', () => ({}))
 
 const { wheelSlot } = await import('../../src/vehicle/carVisual')

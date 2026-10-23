@@ -53,35 +53,48 @@ export function chaseTarget(t: Pick<Telemetry, 'pos' | 'heading' | 'vel' | 'spee
   }
 }
 
-export function createChaseCamera(cam: THREE.PerspectiveCamera, groundHeightAt?: (x: number, z: number) => number) {
-  let mode: CameraMode = 'chase'
-  let cur: CameraTarget | null = null
-  return {
-    get mode() {
-      return mode
-    },
-    toggleMode() {
-      mode = mode === 'chase' ? 'top' : 'chase'
-    },
-    snap() {
-      cur = null
-    },
-    update(t: Telemetry, dt: number) {
-      const tgt = chaseTarget(t, mode)
-      if (groundHeightAt) tgt.pos.y = Math.max(tgt.pos.y, groundHeightAt(tgt.pos.x, tgt.pos.z) + 1.2)
-      if (!cur) cur = { pos: { ...tgt.pos }, look: { ...tgt.look }, fov: tgt.fov }
-      const k = mode === 'chase' ? 7 : 4
-      for (const key of ['x', 'y', 'z'] as const) {
-        cur.pos[key] = damp(cur.pos[key], tgt.pos[key], k, dt)
-        cur.look[key] = damp(cur.look[key], tgt.look[key], k * 1.6, dt)
-      }
-      cur.fov = damp(cur.fov, tgt.fov, 3, dt)
-      cam.position.set(cur.pos.x, cur.pos.y, cur.pos.z)
-      cam.lookAt(cur.look.x, cur.look.y, cur.look.z)
-      if (Math.abs(cam.fov - cur.fov) > 0.01) {
-        cam.fov = cur.fov
-        cam.updateProjectionMatrix()
-      }
-    },
+/**
+ * Chase camera behind the FD that follows the direction of travel (so slides
+ * read), with a top-down Bruno-style mode on C. Critically damped smoothing.
+ */
+export class ChaseCamera {
+  private modeValue: CameraMode = 'chase'
+  private current: CameraTarget | null = null
+
+  constructor(
+    private readonly cam: THREE.PerspectiveCamera,
+    /** optional terrain height so the camera never dips under the ground */
+    private readonly groundHeightAt?: (x: number, z: number) => number,
+  ) {}
+
+  get mode(): CameraMode {
+    return this.modeValue
+  }
+
+  toggleMode(): void {
+    this.modeValue = this.modeValue === 'chase' ? 'top' : 'chase'
+  }
+
+  /** Jump straight to the target next frame (after a reset/teleport). */
+  snap(): void {
+    this.current = null
+  }
+
+  update(t: Telemetry, dt: number): void {
+    const tgt = chaseTarget(t, this.modeValue)
+    if (this.groundHeightAt) tgt.pos.y = Math.max(tgt.pos.y, this.groundHeightAt(tgt.pos.x, tgt.pos.z) + 1.2)
+    const cur = (this.current ??= { pos: { ...tgt.pos }, look: { ...tgt.look }, fov: tgt.fov })
+    const k = this.modeValue === 'chase' ? 7 : 4
+    for (const key of ['x', 'y', 'z'] as const) {
+      cur.pos[key] = damp(cur.pos[key], tgt.pos[key], k, dt)
+      cur.look[key] = damp(cur.look[key], tgt.look[key], k * 1.6, dt)
+    }
+    cur.fov = damp(cur.fov, tgt.fov, 3, dt)
+    this.cam.position.set(cur.pos.x, cur.pos.y, cur.pos.z)
+    this.cam.lookAt(cur.look.x, cur.look.y, cur.look.z)
+    if (Math.abs(this.cam.fov - cur.fov) > 0.01) {
+      this.cam.fov = cur.fov
+      this.cam.updateProjectionMatrix()
+    }
   }
 }

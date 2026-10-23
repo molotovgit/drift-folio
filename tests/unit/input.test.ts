@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { createInput } from '../../src/core/input'
+import { InputController } from '../../src/core/input'
 
 function setup() {
   const target = new EventTarget()
-  const input = createInput(target, () => [])
+  const input = new InputController(target, () => [])
   const key = (type: 'keydown' | 'keyup', code: string) => {
     const e = new Event(type, { cancelable: true }) as Event & { code: string }
     Object.defineProperty(e, 'code', { value: code })

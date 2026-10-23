@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('three/webgpu', () => ({}))
+vi.mock('three/webgpu', () => import('three'))
 const { nearestAnchors } = await import('../../src/render/lightPool')
 
 describe('nearestAnchors', () => {

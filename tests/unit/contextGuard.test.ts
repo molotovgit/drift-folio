@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createContextGuard } from '../../src/core/contextGuard'
+import { ContextGuard } from '../../src/core/contextGuard'
 
 describe('context loss guard', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -7,7 +7,7 @@ describe('context loss guard', () => {
 
   it('gives up after 3 s when the context does not come back', () => {
     const giveUp = vi.fn()
-    const g = createContextGuard(giveUp)
+    const g = new ContextGuard(giveUp)
     g.lost()
     vi.advanceTimersByTime(2999)
     expect(giveUp).not.toHaveBeenCalled()
@@ -17,7 +17,7 @@ describe('context loss guard', () => {
 
   it('does nothing when the context is restored inside the window', () => {
     const giveUp = vi.fn()
-    const g = createContextGuard(giveUp)
+    const g = new ContextGuard(giveUp)
     g.lost()
     vi.advanceTimersByTime(1500)
     g.restored()
@@ -28,7 +28,7 @@ describe('context loss guard', () => {
 
   it('a second loss event while already lost does not restart or double-fire', () => {
     const giveUp = vi.fn()
-    const g = createContextGuard(giveUp)
+    const g = new ContextGuard(giveUp)
     g.lost()
     vi.advanceTimersByTime(2000)
     g.lost()
