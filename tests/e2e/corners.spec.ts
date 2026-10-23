@@ -43,14 +43,22 @@ test.describe('project corners and cards (M5)', () => {
   })
 
   test('drifting through an apex opens that corner card', async ({ page }) => {
-    const id = await page.evaluate(() => {
+    const { id, turn } = await page.evaluate(() => {
       const d = (window as unknown as { __drift: Debug }).__drift
       const c = d.corners()[0]
-      // 8 m before the apex, sliding 30° toward the inside of the bend
+      // 8 m before the apex
       d.teleportIndex(c.edgeId, c.index - 4)
-      d.launch(18, 30 * Math.sign(c.turn))
-      return c.id
+      return { id: c.id, turn: c.turn }
     })
+    // Twin-axis handling: a slide only holds while the drift axis is held (otherwise the
+    // car straightens), so ramp the drift key toward the slide while standing (the axis
+    // does nothing at walking pace), then launch sliding 30° toward the inside of the
+    // bend. launch(+slip) is a right-hand slide (slip > 0), i.e. drift right = L.
+    await page.locator('#scene').click()
+    await page.keyboard.down(turn > 0 ? 'KeyL' : 'KeyJ')
+    await page.waitForTimeout(400)
+    await page.keyboard.down('KeyW')
+    await page.evaluate((sign) => (window as unknown as { __drift: Debug }).__drift.launch(18, 30 * sign), Math.sign(turn))
     await expect.poll(() => page.evaluate(() => (window as unknown as { __drift: Debug }).__drift.openCard()), { timeout: 20_000 }).toBe(id)
     await expect(page.locator('#card-panel')).toBeVisible()
   })

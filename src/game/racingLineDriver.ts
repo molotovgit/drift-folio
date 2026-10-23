@@ -2,6 +2,7 @@ import { idleControls, type ControlState } from '../core/input'
 import { clamp, type Vec2, type Vec3 } from '../core/math'
 import type { Telemetry } from '../vehicle/driftCar'
 import { carConfig } from '../vehicle/carConfig'
+import { driftCommand } from '../vehicle/driftMath'
 import type { RoadNetwork } from '../world/roadNetwork'
 import { radii } from '../world/spline'
 
@@ -22,13 +23,13 @@ export interface RacingLineOptions {
   lookPerSpeed: number
   lookMin: number
   lookMax: number
-  /** corners tighter than this |radius| get a handbrake tap on entry, metres */
+  /** corners tighter than this |radius| get a drift-axis flick on entry, metres */
   hairpinRadius: number
-  /** speed cap through hairpins, m/s: a handbrake slide carries speed wide, so enter slow */
+  /** speed cap through hairpins, m/s: a drift carries speed wide, so enter slow */
   hairpinSpeed: number
-  /** how long a handbrake tap lasts, seconds */
+  /** how long the drift flick is held, seconds */
   tapSeconds: number
-  /** minimum speed for a handbrake tap to be worth it, m/s */
+  /** minimum speed for a drift flick to be worth it, m/s */
   tapMinSpeed: number
   /** throttle held while sliding through a hairpin, 0..1 */
   driftThrottle: number
@@ -37,7 +38,7 @@ export interface RacingLineOptions {
    * oscillation; on the Systems Drop 0 tracked best (1 wandered off the road).
    */
   courseBlend: number
-  /** |steer| cap while gripping: full input is the grip limit, which breaks the rear loose */
+  /** |steer| cap while gripping: full input is the grip limit, so leave a margin */
   gripSteerMax: number
   /** degrees of slip over which the driver lifts off the throttle when not drifting on purpose */
   tcSlipRange: number
@@ -71,15 +72,16 @@ interface PathPoint {
   s: number
   /** signed turn radius (+ = left, same convention as RoadEdge.radius), metres; Infinity on straights */
   radius: number
-  /** which hairpin this sample belongs to (-1 = none), so each gets one tap */
+  /** which hairpin this sample belongs to (-1 = none), so each gets one flick */
   hairpin: number
 }
 
 /**
  * A scripted driver for recording the ghost lap. It follows the centreline of
  * a chain of road edges with pure-pursuit steering, plans speed from the
- * curvature ahead (v = sqrt(mu·g·R·margin), braking-distance aware), and taps
- * the handbrake on entry to tight hairpins so the car actually drifts them.
+ * curvature ahead (v = sqrt(mu·g·R·margin), braking-distance aware), and
+ * flicks the drift axis toward the turn on entry to tight hairpins so the car
+ * actually drifts them (twin-axis handling: the drift axis swings the tail).
  *
  * Conventions (same as DriftCar): world forward +Z, left +X; ControlState
  * steer +1 = right. Call `controls` once per physics tick with the car's
@@ -90,7 +92,7 @@ export class RacingLineDriver {
   private readonly opts: RacingLineOptions
   /** index of the path sample nearest the car (never decreases) */
   private idx = 0
-  /** seconds of handbrake tap remaining */
+  /** seconds of drift flick remaining */
   private tapT = 0
   private readonly tapped = new Set<number>()
 
@@ -124,7 +126,7 @@ export class RacingLineDriver {
     return this.progress >= this.length - margin
   }
 
-  /** Controls for this tick. `dt` (seconds since the last call) runs the handbrake-tap timer. */
+  /** Controls for this tick. `dt` (seconds since the last call) runs the drift-flick timer. */
   controls(t: Telemetry, dt = 1 / 60): ControlState {
     this.track(t.pos)
     const c = idleControls()
@@ -132,7 +134,7 @@ export class RacingLineDriver {
     const target = this.pointAt(this.progress + look)
     c.steer = this.steerToward(t, target.pos, look)
     this.speedControl(t, c)
-    this.handbrakeTaps(t, c, dt)
+    this.driftFlicks(t, c, dt)
     return c
   }
 
@@ -143,8 +145,8 @@ export class RacingLineDriver {
    * steer < 0. The direction of travel blends the nose and the velocity by
    * `courseBlend` (nose only when nearly stopped).
    * Magnitude: pure-pursuit wheel angle delta = atan(2·L·sin(alpha) / d),
-   * normalised by the lock DriftCar allows at this speed when gripping, and
-   * capped at `gripSteerMax` while gripping above 12 m/s.
+   * normalised by the lock DriftCar allows at this speed, and capped at
+   * `gripSteerMax` while gripping above 12 m/s.
    */
   steerToward(t: Pick<Telemetry, 'pos' | 'heading' | 'vel' | 'speed' | 'drifting'>, target: Vec3, dist: number): number {
     const d: Vec2 = { x: target.x - t.pos.x, y: -(target.z - t.pos.z) } // ground frame: (x, -z)
@@ -157,7 +159,9 @@ export class RacingLineDriver {
     const cross = h.x * d.y - h.y * d.x // > 0: target is to the left
     const alpha = Math.atan2(cross, h.x * d.x + h.y * d.y)
     const wheel = Math.atan((2 * carConfig.wheelbase * Math.sin(alpha)) / Math.max(dist, dl, 1))
-    // mirror DriftCar.updateSteering: available lock shrinks with speed unless drifting
+    // mirror DriftCar.updateSteering: available lock shrinks with speed while gripping.
+    // In a drift the steer axis bends the path (strongly), so normalise by full lock
+    // there to keep the corrections gentle.
     const gripLock = Math.atan((carConfig.wheelbase * carConfig.mu * G * carConfig.steerGripMargin) / Math.max(t.speed * t.speed, 1))
     const minLock = (carConfig.highSpeedSteerDeg * 0.25 * Math.PI) / 180
     const maxLock = (carConfig.maxSteerDeg * Math.PI) / 180
@@ -195,9 +199,9 @@ export class RacingLineDriver {
       c.throttle *= clamp(1 - (Math.abs(t.slipDeg) - 3) / this.opts.tcSlipRange, 0, 1)
       return
     }
-    // mid-drift never brake (it spins the car). In a hairpin, part throttle lets the
-    // drift assist hold the slide; anywhere else the slide is unwanted, so lift and
-    // let the assist straighten the car.
+    // mid-drift never brake (it would lock the angle and tighten the line). In a
+    // hairpin, part throttle carries the slide; anywhere else the slide is unwanted,
+    // so lift and let the released drift axis straighten the car.
     c.brake = 0
     c.throttle = this.inHairpin() && t.speed < this.opts.hairpinSpeed + 2 ? this.opts.driftThrottle : 0
   }
@@ -207,11 +211,16 @@ export class RacingLineDriver {
     return this.path[this.idx].hairpin >= 0 || this.pointAt(this.progress + 8).hairpin >= 0
   }
 
-  /** One short handbrake tap per hairpin, just before its entry. */
-  private handbrakeTaps(t: Telemetry, c: ControlState, dt: number): void {
+  /**
+   * One short drift-axis flick per hairpin, just before its entry. It follows
+   * the steering (like the handbrake-drift button): the pure-pursuit steer
+   * already knows which way the car must turn right now, which on an S-bend
+   * entry is not always the hairpin's own direction.
+   */
+  private driftFlicks(t: Telemetry, c: ControlState, dt: number): void {
     if (this.tapT > 0) {
       this.tapT -= dt
-      c.handbrake = true
+      c.drift = driftCommand({ drift: 0, steer: c.steer, handbrake: true }, t.slipDeg)
       return
     }
     // tap only once slowed to near the hairpin speed: a fast slide runs wide into the rail
@@ -220,7 +229,7 @@ export class RacingLineDriver {
     if (entry.hairpin < 0 || this.tapped.has(entry.hairpin)) return
     this.tapped.add(entry.hairpin)
     this.tapT = this.opts.tapSeconds
-    c.handbrake = true
+    c.drift = driftCommand({ drift: 0, steer: c.steer, handbrake: true }, t.slipDeg)
   }
 
   /** Advance `idx` to the nearest sample within a window around it (never jumps to another road). */

@@ -1,9 +1,9 @@
 {
-  "handlingHash": "0bc8afadc31079",
-  "scriptedRunS": 51.817,
-  "ghostTimeS": 56.998,
+  "handlingHash": "0d282aa48ac842",
+  "scriptedRunS": 51.6,
+  "ghostTimeS": 56.76,
   "slowdown": 1.1,
-  "samples": 1037,
+  "samples": 1033,
   "stayedOnRoad": true,
   "maxOffRoadS": 0,
   "edges": [

@@ -20,7 +20,7 @@ async function waitFor(page: Page, pred: (t: Tel) => boolean, timeoutMs: number)
   return t
 }
 
-test('the FD accelerates, drifts on handbrake and straightens when released', async ({ page }) => {
+test('the FD accelerates, drifts on the drift axis and straightens when released', async ({ page }) => {
   test.setTimeout(120_000)
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -36,15 +36,15 @@ test('the FD accelerates, drifts on handbrake and straightens when released', as
   const fast = await waitFor(page, (t) => t.speed > 15, 40_000)
   expect(fast.speed).toBeGreaterThan(15)
 
-  // handbrake + right steer starts a drift
+  // drift axis right (L) + right steer swings the tail out (twin-axis handling)
   await page.keyboard.down('KeyD')
-  await page.keyboard.down('Space')
+  await page.keyboard.down('KeyL')
   const drift = await waitFor(page, (t) => t.drifting, 30_000)
   expect(drift.drifting).toBe(true)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __drift: { skidCount: () => number } }).__drift.skidCount()), { timeout: 20_000 }).toBeGreaterThan(0)
 
-  // release everything: slip settles under 5°
-  await page.keyboard.up('Space')
+  // release everything: the body realigns with the path, slip settles under 5°
+  await page.keyboard.up('KeyL')
   await page.keyboard.up('KeyD')
   await page.keyboard.up('KeyW')
   const calm = await waitFor(page, (t) => Math.abs(t.slipDeg) < 5 && !t.drifting, 60_000)

@@ -29,13 +29,12 @@ for (const tier of ['high', 'low'] as const) {
     await page.waitForTimeout(1500)
     await page.keyboard.down('KeyW')
     await page.waitForFunction(() => (window as unknown as { __drift: Drift }).__drift.telemetry().speed > 16, null, { timeout: 90_000 })
-    await page.keyboard.down('KeyD')
-    await page.keyboard.down('Space')
+    // drift axis right (L): the angle holds only while L is down, so shoot before releasing
+    await page.keyboard.down('KeyL')
     await page.waitForFunction(() => (window as unknown as { __drift: Drift }).__drift.telemetry().drifting, null, { timeout: 90_000 })
-    await page.keyboard.up('Space')
-    await page.keyboard.up('KeyD')
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(400)
     await page.screenshot({ path: `test-results/shots/${tier}-3-drift.png` })
+    await page.keyboard.up('KeyL')
     void tel
   })
 }
