@@ -23,7 +23,8 @@ describe('terrain heights (plan Task 3.2)', () => {
           // left normal of the tangent: facing +Z, left is +X
           const x = p.x + t.y * off
           const z = p.z - t.x * off
-          const above = terrain.heightAt(x, z) - (p.y - 0.02)
+          // against the surface at that offset: near junctions the road is banked to the node plane
+          const above = terrain.heightAt(x, z) - (e.surfaceY(i, off) - 0.02)
           if (above > worst) {
             worst = above
             where = `${e.id}@${i}${off}`

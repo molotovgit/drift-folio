@@ -1,5 +1,6 @@
 import type { Vec3 } from '../core/math'
 import type { RoadNetwork } from './roadNetwork'
+import { catmullRom2D } from './spline'
 
 /**
  * Shortcut geometry (spec §6, plan M7) as data derived from the road network.
@@ -76,7 +77,10 @@ export function restStopCut(roads: RoadNetwork): Channel {
   const near = (x: number, z: number) => a.points.reduce((best, p) => (Math.hypot(p.x - x, p.z - z) < Math.hypot(best.x - x, best.z - z) ? p : best))
   const from = near(204, 352)
   const to = near(180, 556)
-  return { id: 'S4', dirt: false, width: 7, points: densify([{ ...from }, { x: 224, z: 455, y: (from.y + to.y) / 2 }, { ...to }]) }
+  // a smooth curve, not a polyline: a paved strip folds over itself on the inside of a sharp corner
+  const flat = catmullRom2D([{ x: from.x, y: from.z }, { x: 224, y: 455 }, { x: to.x, y: to.z }], 4)
+  const points = flat.map((p, i) => ({ x: p.x, y: from.y + ((to.y - from.y) * i) / (flat.length - 1), z: p.y }))
+  return { id: 'S4', dirt: false, width: 7, points }
 }
 
 /** S6: the hidden trail behind the summit torii, climbing to a small peak. */

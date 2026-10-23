@@ -8,13 +8,16 @@ import { ModelLibrary } from '../render/loadModel'
 import { ToonMaterials } from '../render/toon'
 import { SafeUrl } from '../util/safeUrl'
 import type { SafeStorage } from '../util/storage'
-import { surfaceOf } from '../vehicle/wheel'
 import { DynamicProps } from './dynamicProps'
+import { LotSurface } from './lotSurface'
+import type { RoadNetwork } from './roadNetwork'
 import { BOWLING, GARAGE, GYMKHANA, LANTERNS, LINK_PADS, lot, TOWN_LOTS, TYRE_RACK, type FlatLot } from './townLayout'
 import { TownTextures } from './townTextures'
 
 const TYRE_HEIGHT = 0.23
 const MAX_STACK = 8
+/** lots render this far under their collision surface (see buildLots) */
+const LOT_VISUAL_DROP = -0.02
 
 /** What happened in town this frame (the game turns these into HUD hints and actions). */
 export interface TownEvents {
@@ -42,6 +45,8 @@ export class BaseTown {
     private readonly scene: THREE.Scene,
     private readonly world: RAPIER.World,
     storage: SafeStorage,
+    /** the streets the lots meet */
+    roads: RoadNetwork,
   ) {
     this.gymkhana = new GymkhanaTimer(storage)
     this.physics = new DynamicProps(world, scene)
@@ -52,7 +57,7 @@ export class BaseTown {
       { name: 'gym-start', circle: { center: { x: GYMKHANA.start.x, y: g.y, z: GYMKHANA.start.z }, radius: GYMKHANA.gateRadius } },
       { name: 'gym-finish', circle: { center: { x: GYMKHANA.finish.x, y: g.y, z: GYMKHANA.finish.z }, radius: GYMKHANA.gateRadius } },
     ])
-    this.buildLots()
+    this.buildLots(roads)
     this.buildPads()
   }
 
@@ -104,20 +109,29 @@ export class BaseTown {
     return this.gymkhana.startGate(now)
   }
 
-  /** Paved discs with 'road' colliders so driving on them never counts as off-road. */
-  private buildLots(): void {
-    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
-    for (const l of TOWN_LOTS) {
+  /**
+   * Paved lots with 'road' colliders so driving on them never counts as
+   * off-road. Each meets the street it touches without a step (LotSurface).
+   */
+  private buildLots(roads: RoadNetwork): void {
+    const lots = TOWN_LOTS.map((l) => new LotSurface(l, roads))
+    for (const surface of lots) {
+      const l = surface.lot
       const map = l.name === 'skidpad' ? TownTextures.skidpad() : TownTextures.concrete()
       if (l.name !== 'skidpad') map.repeat.set(l.r / 4, l.r / 4)
-      const mesh = new THREE.Mesh(new THREE.CircleGeometry(l.r, 64), ToonMaterials.create({ color: '#ffffff', map, flatShading: false }))
-      mesh.rotation.x = -Math.PI / 2
-      mesh.position.set(l.x, l.y + 0.01, l.z)
+      const { positions, uvs, indices } = surface.geometry()
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+      geo.setIndex(new THREE.BufferAttribute(indices, 1))
+      geo.computeVertexNormals()
+      const mesh = new THREE.Mesh(geo, ToonMaterials.create({ color: '#ffffff', map, flatShading: false }))
+      // drawn a touch under the true surface so street ribbons crossing a lot never z-fight with it
+      mesh.position.y = LOT_VISUAL_DROP
       mesh.receiveShadow = true
       this.scene.add(mesh)
-      const collider = this.world.createCollider(RAPIER.ColliderDesc.cylinder(0.25, l.r).setTranslation(l.x, l.y - 0.25, l.z).setFriction(0.9), body)
-      surfaceOf.set(collider.handle, 'road')
     }
+    LotSurface.colliders(this.world, lots)
   }
 
   private buildPads(): void {

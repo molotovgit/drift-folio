@@ -136,9 +136,11 @@ export class GuardRails {
       const l = leftOf(t.x, t.y)
       const x = p.x + l.x * RAIL_OFFSET * side
       const z = p.z + l.z * RAIL_OFFSET * side
-      positions.set([x, p.y + low, z, x, p.y + high, z], k * 6)
+      // the rail stands on the (possibly junction-banked) surface at its offset
+      const y = edge.surfaceY(i, RAIL_OFFSET * side)
+      positions.set([x, y + low, z, x, y + high, z], k * 6)
       if (edge.dist[i] - lastPost >= POST_SPACING) {
-        postAt.push(new THREE.Matrix4().makeTranslation(x, p.y - 0.05, z))
+        postAt.push(new THREE.Matrix4().makeTranslation(x, y - 0.05, z))
         lastPost = edge.dist[i]
       }
     }
