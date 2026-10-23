@@ -15,8 +15,10 @@ export const carConfig = {
   damperC: 3600,
   /** maximum front wheel lock */
   maxSteerDeg: 38,
-  /** lock available at high speed when not drifting */
+  /** floor for speed-limited lock is a quarter of this */
   highSpeedSteerDeg: 14,
+  /** full steer input asks for this share of the tyres' grip limit when not drifting */
+  steerGripMargin: 1.0,
   steerSpeed: 10,
   powerW: 206_000,
   maxDriveForce: 7600,
@@ -24,7 +26,10 @@ export const carConfig = {
   maxReverseSpeed: 9,
   brakeForce: 13000,
   brakeFrontShare: 0.62,
-  handbrakeDrag: 0.7,
+  /** kinetic friction of a locked (handbrake) tyre, fraction of mu·load */
+  lockedFriction: 0.6,
+  /** traction control: max share of the friction circle the drive may use while gripping */
+  tractionLimit: 0.6,
   mu: 1.15,
   peakSlipDeg: 8,
   frontSlide: 0.78,

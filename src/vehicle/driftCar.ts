@@ -34,12 +34,31 @@ export interface WheelState {
   surface: string | null
 }
 
+export interface Pose {
+  pos: Vec3
+  rot: { x: number; y: number; z: number; w: number }
+  wheels: Vec3[]
+}
+
 export interface DriftCar {
   body: RAPIER.RigidBody
   update(c: ControlState, h: number): void
   telemetry(): Telemetry
   wheels(): readonly WheelState[]
+  /** body and wheel-hub pose blended between the last two physics ticks */
+  pose(alpha: number): Pose
   resetTo(p: Vec3, yaw: number): void
+}
+
+function nlerpQuat(a: Pose['rot'], b: Pose['rot'], t: number): Pose['rot'] {
+  const d = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+  const s = d < 0 ? -1 : 1
+  const x = a.x + (b.x * s - a.x) * t
+  const y = a.y + (b.y * s - a.y) * t
+  const z = a.z + (b.z * s - a.z) * t
+  const w = a.w + (b.w * s - a.w) * t
+  const l = Math.hypot(x, y, z, w) || 1
+  return { x: x / l, y: y / l, z: z / l, w: w / l }
 }
 
 interface Wheel {
@@ -115,6 +134,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
   let prevClutch = false
   let lastThrottle = 0
   let prevSlipAbs = 0
+  let prevPose: Pose | null = null
   const ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
   const rayLen = cfg.restLength + cfg.wheelRadius
   const wheelShareMass = cfg.mass / 4
@@ -142,13 +162,28 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
       slipDeg,
       drifting: isDrifting(slipDeg, speed) && contacts.length >= 2,
       wheelsOnGround: contacts.length,
-      onRoad: contacts.some((w) => w.state.surface === 'road' || w.state.surface === null),
+      onRoad: contacts.some((w) => w.state.surface === 'road'),
       yaw: Math.atan2(fwd.x, fwd.z),
       throttle: lastThrottle,
     }
   }
 
+  function currentPose(): Pose {
+    const p = body.translation()
+    const r = body.rotation()
+    return { pos: { x: p.x, y: p.y, z: p.z }, rot: { x: r.x, y: r.y, z: r.z, w: r.w }, wheels: wheels.map((w) => ({ ...w.state.pos })) }
+  }
+
+  function pose(alpha: number): Pose {
+    const cur = currentPose()
+    if (!prevPose) return cur
+    const a = prevPose
+    const l = (u: Vec3, v: Vec3): Vec3 => ({ x: lerp(u.x, v.x, alpha), y: lerp(u.y, v.y, alpha), z: lerp(u.z, v.z, alpha) })
+    return { pos: l(a.pos, cur.pos), rot: nlerpQuat(a.rot, cur.rot, alpha), wheels: cur.wheels.map((w, i) => l(a.wheels[i] ?? w, w)) }
+  }
+
   function update(c: ControlState, h: number) {
+    prevPose = currentPose()
     lastThrottle = c.throttle
     const t0 = telemetry()
     const p = body.translation()
@@ -167,7 +202,10 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
 
     // steering: speed-sensitive lock, full lock while sliding, assist toward the slide
     const drifting = t0.drifting
-    const lockDeg = drifting ? cfg.maxSteerDeg : lerp(cfg.maxSteerDeg, cfg.highSpeedSteerDeg, clamp(t0.speed / 40, 0, 1))
+    // While gripping, limit lock to what the tyres can hold at this speed (full input ≈ the
+    // grip limit, like an arcade racer); drifting unlocks full counter-steer.
+    const gripLockDeg = Math.atan((cfg.wheelbase * cfg.mu * 9.81 * cfg.steerGripMargin) / Math.max(t0.speed * t0.speed, 1)) / RAD
+    const lockDeg = drifting ? cfg.maxSteerDeg : clamp(gripLockDeg, cfg.highSpeedSteerDeg * 0.25, cfg.maxSteerDeg)
     const steerCmd = counterSteerAssist(t0.slipDeg, c.steer, cfg.counterSteer, cfg.maxSteerDeg)
     steerAngle = damp(steerAngle, -steerCmd * lockDeg * RAD, cfg.steerSpeed, h)
 
@@ -202,7 +240,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
       const contact = add(origin, scale(down, toi))
       const n = norm(hit.normal)
       const compression = rayLen - toi
-      const compVel = (compression - w.prevCompression) / h
+      const compVel = w.state.contact ? (compression - w.prevCompression) / h : 0
       w.prevCompression = compression
       const spring = Math.max(0, cfg.springK * compression + cfg.damperC * compVel)
       const load = spring
@@ -217,30 +255,47 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
       const vLat = dot(pv, wLeft)
 
       // longitudinal
-      let fLong = 0
-      if (!w.front) {
-        if (c.throttle > 0) fLong += driveTotal / 2
-        if (reversing && forwardSpeed > -cfg.maxReverseSpeed) fLong -= (cfg.reverseForce * c.brake) / 2
-        if (c.handbrake) fLong -= Math.sign(vLong) * Math.min(Math.abs(vLong) * wheelShareMass / h, cfg.handbrakeDrag * cfg.mu * load)
-      }
-      if (braking) {
-        const share = w.front ? cfg.brakeFrontShare / 2 : (1 - cfg.brakeFrontShare) / 2
-        fLong -= Math.sign(vLong) * Math.min(cfg.brakeForce * share * c.brake, Math.abs(vLong) * wheelShareMass / h)
-      }
-      // rolling resistance
-      fLong -= vLong * cfg.rollingCoeff / 4
-
-      // lateral (slip-angle grip curve, friction circle)
-      const tyreSlip = Math.atan2(vLat, Math.max(Math.abs(vLong), 1.0))
       const gripScale = w.front ? 1 : rearScale
-      const slideFactor = w.front ? cfg.frontSlide : cfg.rearSlide
       const maxF = cfg.mu * load * gripScale
-      fLong = clamp(fLong, -maxF, maxF)
-      const latCap = Math.sqrt(Math.max(0, maxF * maxF - fLong * fLong))
-      let fLat = -Math.sign(vLat) * lateralGrip(tyreSlip, cfg.peakSlipDeg * RAD, slideFactor) * latCap
-      // never push past zero lateral velocity in one step (low-speed jitter)
-      const stopLat = Math.abs(vLat) * wheelShareMass / h
-      fLat = clamp(fLat, -stopLat, stopLat)
+      const locked = !w.front && c.handbrake
+      let fLong = 0
+      let fLat = 0
+      const tyreSlip = Math.atan2(vLat, Math.max(Math.abs(vLong), 1.0))
+      if (locked) {
+        // A locked tyre slides: kinetic friction opposes the whole contact-patch slip velocity.
+        const slipSpeed = Math.hypot(vLong, vLat)
+        if (slipSpeed > 1e-3) {
+          const fk = Math.min(cfg.lockedFriction * cfg.mu * load, slipSpeed * wheelShareMass / h)
+          fLong = (-vLong / slipSpeed) * fk
+          fLat = (-vLat / slipSpeed) * fk
+        }
+      } else {
+        if (!w.front) {
+          if (c.throttle > 0) {
+            // Traction control: drive leaves room for cornering grip unless the driver
+            // is deliberately breaking traction (clutch kick or already drifting).
+            const steerUse = Math.min(1, Math.abs(c.steer) * 2)
+            const tcCap = kickT > 0 || drifting ? Infinity : maxF * (1 - (1 - cfg.tractionLimit) * steerUse)
+            fLong += Math.min(driveTotal / 2, tcCap)
+          }
+          if (reversing && forwardSpeed > -cfg.maxReverseSpeed) fLong -= (cfg.reverseForce * c.brake) / 2
+        }
+        if (braking) {
+          const share = w.front ? cfg.brakeFrontShare / 2 : (1 - cfg.brakeFrontShare) / 2
+          fLong -= Math.sign(vLong) * Math.min(cfg.brakeForce * share * c.brake, Math.abs(vLong) * wheelShareMass / h)
+        }
+        // rolling resistance
+        fLong -= vLong * cfg.rollingCoeff / 4
+
+        // lateral (slip-angle grip curve, friction circle)
+        const slideFactor = w.front ? cfg.frontSlide : cfg.rearSlide
+        fLong = clamp(fLong, -maxF, maxF)
+        const latCap = Math.sqrt(Math.max(0, maxF * maxF - fLong * fLong))
+        fLat = -Math.sign(vLat) * lateralGrip(tyreSlip, cfg.peakSlipDeg * RAD, slideFactor) * latCap
+        // never push past zero lateral velocity in one step (low-speed jitter)
+        const stopLat = Math.abs(vLat) * wheelShareMass / h
+        fLat = clamp(fLat, -stopLat, stopLat)
+      }
 
       const force = add(add(scale(n, spring), scale(wFwd, fLong)), scale(wLeft, fLat))
       body.applyImpulseAtPoint(scale(force, h), contact, true)
@@ -249,7 +304,7 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
       w.state.contactPoint = contact
       w.state.pos = add(contact, scale(n, cfg.wheelRadius))
       w.state.spin += (vLong / cfg.wheelRadius) * h * (c.handbrake && !w.front ? 0 : 1)
-      w.state.slide = clamp(Math.abs(Math.sin(tyreSlip)) * 1.6 + (c.handbrake && !w.front ? 0.5 : 0), 0, 1) * clamp(Math.abs(vLong) / 6, 0, 1)
+      w.state.slide = clamp(Math.abs(Math.sin(tyreSlip)) * 1.6 + (locked ? 0.5 : 0), 0, 1) * clamp(Math.abs(vLong) / 6, 0, 1)
       const handle = hit.collider.handle
       w.state.surface = surfaceOf.get(handle) ?? null
     }
@@ -280,8 +335,16 @@ export function createDriftCar(world: RAPIER.World, start: Vec3, startYaw = 0, c
     body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     body.setAngvel({ x: 0, y: 0, z: 0 }, true)
     steerAngle = 0
-    for (const w of wheels) w.prevCompression = 0
+    kickT = 0
+    prevClutch = false
+    lastThrottle = 0
+    prevSlipAbs = 0
+    prevPose = null
+    for (const w of wheels) {
+      w.prevCompression = 0
+      w.state.contact = false
+    }
   }
 
-  return { body, update, telemetry, wheels: () => wheels.map((w) => w.state), resetTo }
+  return { body, update, telemetry, wheels: () => wheels.map((w) => w.state), pose, resetTo }
 }

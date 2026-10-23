@@ -15,6 +15,7 @@ import { isSkipOpen, openSkipOverlay } from './ui/skip'
 import { createBoxCarVisual, loadCarVisual, type CarVisual } from './vehicle/carVisual'
 import { createDriftCar } from './vehicle/driftCar'
 import { buildGreybox } from './world/greybox'
+import { groundHeight } from './world/ground'
 
 const params = new URLSearchParams(location.search)
 const debug = params.has('debug')
@@ -92,12 +93,14 @@ async function boot() {
     if (controls.camera) cam.toggleMode()
     if (controls.reset) {
       const t = car.telemetry()
-      car.resetTo({ x: t.pos.x, y: 0, z: t.pos.z }, t.yaw)
+      car.resetTo({ x: t.pos.x, y: groundHeight(world, t.pos.x, t.pos.z, car.body), z: t.pos.z }, t.yaw)
+      cam.snap()
     }
-    if (!paused) loop.advance(rawDt)
+    const alpha = paused ? 1 : loop.advance(rawDt)
     greybox.update()
-    visual.sync(car)
-    const t = car.telemetry()
+    const pose = car.pose(alpha)
+    visual.sync(car, pose)
+    const t = { ...car.telemetry(), pos: pose.pos }
 
     // smoke from the rear tyres
     const wheels = car.wheels()

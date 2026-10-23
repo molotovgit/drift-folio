@@ -2,11 +2,11 @@ import * as THREE from 'three/webgpu'
 import { loadModel } from '../render/loadModel'
 import { palette } from '../render/palette'
 import { carConfig } from './carConfig'
-import type { DriftCar } from './driftCar'
+import type { DriftCar, Pose } from './driftCar'
 
 export interface CarVisual {
   root: THREE.Object3D
-  sync(car: DriftCar): void
+  sync(car: DriftCar, pose: Pose): void
   setHeadlights(on: boolean): void
 }
 
@@ -42,16 +42,15 @@ function makeVisual(body: THREE.Object3D, wheels: THREE.Object3D[], bodyYOffset:
     setHeadlights(on) {
       beams.forEach((b) => (b.visible = on))
     },
-    sync(car) {
-      const p = car.body.translation()
-      const r = car.body.rotation()
-      chassis.position.set(p.x, p.y, p.z)
-      chassis.quaternion.set(r.x, r.y, r.z, r.w)
-      q.set(r.x, r.y, r.z, r.w)
+    sync(car, pose) {
+      chassis.position.set(pose.pos.x, pose.pos.y, pose.pos.z)
+      chassis.quaternion.set(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w)
+      q.set(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w)
       car.wheels().forEach((w, i) => {
         const m = wheels[i]
-        if (!m) return
-        m.position.set(w.pos.x, w.pos.y, w.pos.z)
+        const p = pose.wheels[i]
+        if (!m || !p) return
+        m.position.set(p.x, p.y, p.z)
         yawQ.setFromAxisAngle(Y, w.steerRad)
         spinQ.setFromAxisAngle(X, w.spin)
         m.quaternion.copy(q).multiply(yawQ).multiply(spinQ)
