@@ -1,52 +1,64 @@
-"""Torii gate at the summit. Spans an 8 m road: pillars 9 m apart, 6.4 m tall."""
+"""Torii gate at the summit (myojin style). Spans an 8 m road: pillars 9 m apart, ~6.6 m tall.
+
+The kasagi (top beam) is loop-cut along its length before bending it into an arc, so it really
+curves; ends sweep up ~0.45 m. Pillars lean inward slightly (uchikorobi).
+"""
+import math
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from lib import add_mod, assign, bpy, clear, finish, join, mat  # noqa: E402
+from proplib import Vector, box, bmesh, bpy, cyl, finish, join, mat, rod, set_origin  # noqa: E402
 
-clear()
+bpy.ops.wm.read_factory_settings(use_empty=True)
 red, ink = mat("torii"), mat("ink")
 parts = []
 
-for x in (-4.5, 4.5):
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.32, depth=5.9, location=(x, 0, 2.95), vertices=12)
-    pillar = assign(bpy.context.object, red)
-    pillar.scale = (1, 1, 1)
-    parts.append(pillar)
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.42, depth=0.5, location=(x, 0, 0.25), vertices=12)
-    parts.append(assign(bpy.context.object, ink))  # kamaki base ring
+LEAN = 0.14  # inward offset of pillar tops
+for s in (-1, 1):
+    x = 4.5 * s
+    parts.append(rod((x, 0, 0), (x - s * LEAN, 0, 5.95), 0.33, 0.29, red, verts=12))
+    parts.append(cyl(0.43, 0.55, (x, 0, 0), ink, verts=12))           # kamaki base sleeve
+    parts.append(cyl(0.36, 0.08, (x - s * LEAN * 0.78, 0, 4.62), ink, verts=12))  # metal band
 
-# nuki: lower tie beam, passes through pillars
-bpy.ops.mesh.primitive_cube_add(location=(0, 0, 4.7))
-nuki = assign(bpy.context.object, red)
-nuki.scale = (5.6, 0.22, 0.2)
-parts.append(nuki)
+# nuki: lower tie beam passing through both pillars, ends protrude
+parts.append(box((10.6, 0.36, 0.42), (0, 0, 4.72), red))
+for s in (-1, 1):  # kusabi wedges where the nuki pierces the pillars
+    parts.append(box((0.16, 0.42, 0.3), (s * (4.5 - LEAN * 0.8 + 0.4), 0, 4.72), ink))
 
-# shimaki + kasagi: top beams, kasagi black with upturned ends
-bpy.ops.mesh.primitive_cube_add(location=(0, 0, 5.75))
-shimaki = assign(bpy.context.object, red)
-shimaki.scale = (5.9, 0.34, 0.2)
-parts.append(shimaki)
+# gakuzuka strut with the name plaque
+parts.append(box((0.28, 0.26, 0.82), (0, 0, 5.3), red))
+parts.append(box((0.95, 0.08, 1.05), (0, -0.2, 5.28), ink))
 
-bpy.ops.mesh.primitive_cube_add(location=(0, 0, 6.15))
-kasagi = assign(bpy.context.object, ink)
-kasagi.scale = (6.4, 0.42, 0.2)
-add_mod(kasagi, "SIMPLE_DEFORM", deform_method="BEND", angle=-0.35, deform_axis="Y")
+# shimaki: lower top beam
+parts.append(box((10.9, 0.56, 0.36), (0, 0, 5.92), red))
+
+# kasagi: upper top beam, black, curved. Loop cuts along its length first, then bend it as a
+# true arc (centre of curvature above the beam) so the ends sweep up ~0.45 m (sori).
+KZ, RISE, HALF = 6.36, 0.45, 5.75
+bm = bmesh.new()
+bmesh.ops.create_cube(bm, size=1.0)
+bmesh.ops.scale(bm, vec=(2 * HALF, 0.9, 0.5), verts=bm.verts)
+long_edges = [e for e in bm.edges if abs(e.verts[0].co.x - e.verts[1].co.x) > 1.0]
+bmesh.ops.subdivide_edges(bm, edges=long_edges, cuts=14, use_grid_fill=True)
+R = HALF * HALF / (2 * RISE)
+for v in bm.verts:
+    x, z = v.co.x, v.co.z
+    th = x / R
+    v.co.x = math.sin(th) * (R - z)
+    v.co.z = R - (R - z) * math.cos(th) + KZ
+    if abs(x) > HALF - 0.01:  # angled end cuts, wider at the top
+        v.co.x += math.copysign(0.18, x) * (z / 0.25)
+me = bpy.data.meshes.new("kasagi")
+bm.to_mesh(me)
+bm.free()
+kasagi = bpy.data.objects.new("kasagi", me)
+bpy.context.scene.collection.objects.link(kasagi)
+kasagi.data.materials.append(ink)
 parts.append(kasagi)
 
-# gakuzuka: centre strut with a name plaque
-bpy.ops.mesh.primitive_cube_add(location=(0, 0, 5.22))
-strut = assign(bpy.context.object, red)
-strut.scale = (0.22, 0.2, 0.36)
-parts.append(strut)
-bpy.ops.mesh.primitive_cube_add(location=(0, -0.24, 5.22))
-plaque = assign(bpy.context.object, ink)
-plaque.scale = (0.45, 0.04, 0.32)
-parts.append(plaque)
-
-for p in parts:
-    bpy.context.view_layer.objects.active = p
-    bpy.ops.object.transform_apply(scale=True)
-join(parts, "torii")
+torii = join(parts, "torii")
+for p in torii.data.polygons:
+    p.use_smooth = False
+set_origin(torii, (0, 0, 0))
 finish("torii", 1500, size_range=((9, 0.5, 6), (14, 1.5, 7.5)), require_materials=("torii", "ink"))

@@ -51,6 +51,15 @@ PALETTE = {
     "screen": "#9fe8ff",
     "paper_lantern": "#ffcf7a",
     "sign_green": "#2f8a5a",
+    # appended for environment props (M2)
+    "stone": "#9a8ea0",
+    "hazard_yellow": "#f2c230",
+    "noren": "#2a3a7a",
+    "tunnel_dark": "#241c2e",
+    "loco_red": "#b8302a",
+    "container_teal": "#2f8a8a",
+    "container_rust": "#a8502e",
+    "aluminium": "#c8c4cc",
 }
 
 EMISSIVE = {"headlight": 4.0, "taillight": 2.5, "lamp_glow": 6.0, "screen": 2.0, "paper_lantern": 3.0}
